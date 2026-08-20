@@ -22,7 +22,7 @@ import streamlit as st
 # - No live orders
 # ============================================================
 
-APP_VERSION = "8.3.2"
+APP_VERSION = "8.3.3"
 BINANCE = "https://data-api.binance.vision/api/v3/klines"
 COINS = [
     "BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "DOGEUSDT",
@@ -79,7 +79,7 @@ def make_config(days, mode, capital, risk, fee, slip):
 
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch(symbol, interval, limit):
-    target = min(int(limit), 10000)
+    target = min(int(limit), 30000)
     rows = []
     end = None
 
@@ -240,8 +240,8 @@ def indicators(d):
 @st.cache_data(ttl=300, show_spinner=False)
 def build_mtf(symbol, limit):
     d5 = indicators(fetch(symbol, "5m", limit))
-    d15 = indicators(fetch(symbol, "15m", max(500, min(3000, limit // 3 + 100))))
-    d1 = indicators(fetch(symbol, "1h", max(500, min(2000, limit // 12 + 100))))
+    d15 = indicators(fetch(symbol, "15m", min(10000, max(500, limit // 3 + 100))))
+    d1 = indicators(fetch(symbol, "1h", min(5000, max(500, limit // 12 + 100))))
 
     # Only closed higher-TF candles are allowed.
     def htf(d, suffix):
@@ -996,7 +996,7 @@ with st.sidebar:
     risk = st.slider("Risico per trade (%)", .25, 2.0, 1.0, .25)
     fee = st.number_input("Fee per kant (%)", 0.0, .50, .10, .01)
     slip = st.number_input("Slippage per kant (%)", 0.0, .50, .03, .01)
-    days = st.select_slider("Onderzoeksperiode", options=[7, 14, 30], value=30)
+    days = st.select_slider("Onderzoeksperiode", options=[14, 30, 60, 90], value=60)
 
 current_config = make_config(days, mode, capital, risk, fee, slip)
 store = load_store()
