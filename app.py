@@ -7,61 +7,31 @@ import pandas as pd
 import requests
 import streamlit as st
 
-
 # ============================================================
 # Crypto DayTrader v8.4.1
-# ============================================================
-# Research engine only — no live orders
-#
-# Features:
-# - 5m execution timeframe
-# - 15m + 1h higher timeframe confirmation
-# - Long / Short independently tested
-# - Trend strategy
-# - Breakout strategy
-# - Pullback strategy
-# - Mean-reversion strategy
-# - Momentum strategy
-# - ATR stop loss
-# - Risk/reward TP
-# - ATR trailing stop
-# - Time exit
+# Robust crypto strategy research engine
+# - Trend / Breakout / Pullback / Mean Reversion / Momentum
+# - LONG and SHORT independently evaluated
+# - Multi-timeframe confirmation (5m / 15m / 1h)
 # - Realistic next-open execution
-# - Fees + slippage
+# - ATR stop, take profit and trailing stop
 # - 3-fold walk-forward validation
-# - Untouched 20% final OOS
-# - Parameter stability
-# - Monte Carlo using actual trade P&Ls
+# - Final 20% untouched OOS test
+# - Parameter stability test on validation data only
+# - Bootstrap Monte Carlo using actual OOS trade P&Ls
 # - Autosave after every coin
-# - Optimizer
-# - Strategy Discovery
-# - Robustness overview
-# - Scanner
+# - No live orders
 # ============================================================
 
 APP_VERSION = "8.4.1"
-
 BINANCE = "https://data-api.binance.vision/api/v3/klines"
 
 COINS = [
-    "BTCUSDT",
-    "ETHUSDT",
-    "SOLUSDT",
-    "XRPUSDT",
-    "DOGEUSDT",
-    "ADAUSDT",
-    "AVAXUSDT",
-    "LINKUSDT",
-    "LTCUSDT",
-    "DOTUSDT",
+    "BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "DOGEUSDT",
+    "ADAUSDT", "AVAXUSDT", "LINKUSDT", "LTCUSDT", "DOTUSDT",
 ]
 
 RESULTS_FILE = "optimizer_results_v841.json"
-
-
-# ============================================================
-# PAGE
-# ============================================================
 
 st.set_page_config(
     page_title=f"Crypto DayTrader v{APP_VERSION}",
@@ -71,34 +41,26 @@ st.set_page_config(
 
 
 # ============================================================
-# PERSISTENCE
+# Persistence
 # ============================================================
-
-def empty_store():
-    return {
-        "config": None,
-        "results": {},
-    }
-
 
 def load_store():
     if not os.path.exists(RESULTS_FILE):
-        return empty_store()
+        return {"config": None, "results": {}}
 
     try:
         with open(RESULTS_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
 
         if not isinstance(data, dict):
-            return empty_store()
+            return {"config": None, "results": {}}
 
         data.setdefault("config", None)
         data.setdefault("results", {})
-
         return data
 
     except Exception:
-        return empty_store()
+        return {"config": None, "results": {}}
 
 
 def save_store(store):
@@ -128,7 +90,7 @@ def make_config(days, mode, capital, risk, fee, slip):
 
 
 # ============================================================
-# DATA
+# Binance data
 # ============================================================
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -139,7 +101,6 @@ def fetch(symbol, interval, limit):
     end = None
 
     for _ in range(40):
-
         if len(rows) >= target:
             break
 
@@ -158,7 +119,6 @@ def fetch(symbol, interval, limit):
         last_error = None
 
         for retry in range(5):
-
             try:
                 response = requests.get(
                     BINANCE,
@@ -170,17 +130,16 @@ def fetch(symbol, interval, limit):
                 )
 
                 if response.status_code in (418, 429):
-                    time.sleep(min(8, 2 ** retry))
+                    time.sleep(min(6, 2 ** retry))
                     continue
 
                 response.raise_for_status()
-
                 batch = response.json()
                 break
 
             except Exception as exc:
                 last_error = exc
-                time.sleep(min(5, 1.5 ** retry))
+                time.sleep(min(4, 1.5 ** retry))
 
         if batch is None:
             raise RuntimeError(
@@ -191,7 +150,6 @@ def fetch(symbol, interval, limit):
             break
 
         rows = batch + rows
-
         end = batch[0][0] - 1
 
         if len(batch) < n:
@@ -212,10 +170,10 @@ def fetch(symbol, interval, limit):
         "close",
         "volume",
         "close_time",
-        "quote_volume",
+        "qv",
         "trades",
-        "taker_base",
-        "taker_quote",
+        "tb",
+        "tq",
         "ignore",
     ]
 
@@ -242,7 +200,7 @@ def fetch(symbol, interval, limit):
         utc=True,
     )
 
-    data = (
+    return (
         data.sort_values("time")
         [
             [
@@ -259,11 +217,9 @@ def fetch(symbol, interval, limit):
         .reset_index(drop=True)
     )
 
-    return data
-
 
 # ============================================================
-# INDICATORS
+# Indicators
 # ============================================================
 
 def ema(series, period):
@@ -276,29 +232,25 @@ def ema(series, period):
 def rsi(series, period=14):
     delta = series.diff()
 
-    gains = delta.clip(lower=0)
-    losses = -delta.clip(upper=0)
+    up = delta.clip(lower=0)
+    down = -delta.clip(upper=0)
 
-    avg_gain = gains.ewm(
+    avg_up = up.ewm(
         alpha=1 / period,
         adjust=False,
     ).mean()
 
-    avg_loss = losses.ewm(
+    avg_down = down.ewm(
         alpha=1 / period,
         adjust=False,
     ).mean()
 
-    rs = avg_gain / avg_loss.replace(
-        0,
-        np.nan,
-    )
+    rs = avg_up / avg_down.replace(0, np.nan)
 
     return 100 - 100 / (1 + rs)
 
 
 def adx(high, low, close, period=14):
-
     up = high.diff()
     down = -low.diff()
 
@@ -323,7 +275,7 @@ def adx(high, low, close, period=14):
         axis=1,
     ).max(axis=1)
 
-    atr = true_range.ewm(
+    atr_value = true_range.ewm(
         alpha=1 / period,
         adjust=False,
     ).mean()
@@ -337,7 +289,7 @@ def adx(high, low, close, period=14):
             alpha=1 / period,
             adjust=False,
         ).mean()
-        / atr.replace(0, np.nan)
+        / atr_value.replace(0, np.nan)
     )
 
     minus_di = (
@@ -349,16 +301,13 @@ def adx(high, low, close, period=14):
             alpha=1 / period,
             adjust=False,
         ).mean()
-        / atr.replace(0, np.nan)
+        / atr_value.replace(0, np.nan)
     )
 
     dx = (
         100
         * (plus_di - minus_di).abs()
-        / (plus_di + minus_di).replace(
-            0,
-            np.nan,
-        )
+        / (plus_di + minus_di).replace(0, np.nan)
     )
 
     return dx.ewm(
@@ -368,34 +317,27 @@ def adx(high, low, close, period=14):
 
 
 def indicators(data):
-
     x = data.copy()
 
-    # Trend
-    x["ema9"] = ema(x["close"], 9)
-    x["ema20"] = ema(x["close"], 20)
-    x["ema50"] = ema(x["close"], 50)
-    x["ema200"] = ema(x["close"], 200)
+    x["ema9"] = ema(x.close, 9)
+    x["ema20"] = ema(x.close, 20)
+    x["ema50"] = ema(x.close, 50)
+    x["ema200"] = ema(x.close, 200)
 
-    # RSI
-    x["rsi"] = rsi(x["close"], 14)
+    x["rsi"] = rsi(x.close, 14)
 
-    # MACD
-    ema12 = ema(x["close"], 12)
-    ema26 = ema(x["close"], 26)
+    ema12 = ema(x.close, 12)
+    ema26 = ema(x.close, 26)
 
     x["macd"] = ema12 - ema26
-    x["macd_signal"] = ema(x["macd"], 9)
-    x["macd_hist"] = (
-        x["macd"] - x["macd_signal"]
-    )
+    x["macd_sig"] = ema(x.macd, 9)
+    x["macd_hist"] = x.macd - x.macd_sig
 
-    # ATR
     true_range = pd.concat(
         [
-            x["high"] - x["low"],
-            (x["high"] - x["close"].shift()).abs(),
-            (x["low"] - x["close"].shift()).abs(),
+            x.high - x.low,
+            (x.high - x.close.shift()).abs(),
+            (x.low - x.close.shift()).abs(),
         ],
         axis=1,
     ).max(axis=1)
@@ -405,173 +347,93 @@ def indicators(data):
         adjust=False,
     ).mean()
 
-    x["atr_pct"] = (
-        x["atr"] / x["close"] * 100
+    x["atr_pct"] = x.atr / x.close * 100
+    x["adx"] = adx(x.high, x.low, x.close, 14)
+
+    x["vol_ma"] = x.volume.rolling(20).mean()
+    x["vol_ratio"] = (
+        x.volume / x.vol_ma.replace(0, np.nan)
     )
 
-    # ADX
-    x["adx"] = adx(
-        x["high"],
-        x["low"],
-        x["close"],
-        14,
-    )
+    x["ret1"] = x.close.pct_change()
+    x["ret3"] = x.close.pct_change(3)
+    x["ret12"] = x.close.pct_change(12)
 
-    # Volume
-    x["volume_ma"] = (
-        x["volume"].rolling(20).mean()
-    )
-
-    x["volume_ratio"] = (
-        x["volume"]
-        / x["volume_ma"].replace(0, np.nan)
-    )
-
-    # Returns
-    x["ret1"] = x["close"].pct_change()
-    x["ret3"] = x["close"].pct_change(3)
-    x["ret12"] = x["close"].pct_change(12)
-
-    # Volatility
-    x["volatility"] = (
-        x["ret1"].rolling(20).std()
-    )
-
-    x["volatility_ma"] = (
-        x["volatility"].rolling(50).mean()
-    )
+    x["volatility"] = x.ret1.rolling(20).std()
+    x["volatility_ma"] = x.volatility.rolling(50).mean()
 
     x["vol_regime"] = (
-        x["volatility"]
-        / x["volatility_ma"].replace(0, np.nan)
+        x.volatility
+        / x.volatility_ma.replace(0, np.nan)
     )
 
-    # Breakouts
-    x["high20"] = (
-        x["high"]
-        .shift(1)
-        .rolling(20)
-        .max()
-    )
+    x["high20"] = x.high.shift(1).rolling(20).max()
+    x["low20"] = x.low.shift(1).rolling(20).min()
 
-    x["low20"] = (
-        x["low"]
-        .shift(1)
-        .rolling(20)
-        .min()
-    )
+    x["high55"] = x.high.shift(1).rolling(55).max()
+    x["low55"] = x.low.shift(1).rolling(55).min()
 
-    x["high55"] = (
-        x["high"]
-        .shift(1)
-        .rolling(55)
-        .max()
-    )
-
-    x["low55"] = (
-        x["low"]
-        .shift(1)
-        .rolling(55)
-        .min()
-    )
-
-    # Bollinger / mean reversion
-    x["bb_mid"] = (
-        x["close"].rolling(20).mean()
-    )
-
-    x["bb_std"] = (
-        x["close"].rolling(20).std()
-    )
+    x["bb_mid"] = x.close.rolling(20).mean()
+    x["bb_std"] = x.close.rolling(20).std()
 
     x["bb_z"] = (
-        (x["close"] - x["bb_mid"])
-        / x["bb_std"].replace(0, np.nan)
+        (x.close - x.bb_mid)
+        / x.bb_std.replace(0, np.nan)
     )
 
     x["bb_width"] = (
-        4 * x["bb_std"]
-        / x["bb_mid"].replace(0, np.nan)
+        4 * x.bb_std
+        / x.bb_mid.replace(0, np.nan)
     )
 
-    # Trend slope
     x["ema20_slope"] = (
-        x["ema20"].pct_change(5) * 100
+        x.ema20.pct_change(5) * 100
     )
 
     x["ema50_slope"] = (
-        x["ema50"].pct_change(10) * 100
+        x.ema50.pct_change(10) * 100
     )
 
-    # Momentum acceleration
     x["momentum_accel"] = (
-        x["ret3"] - x["ret12"] / 4
+        x.ret3 - x.ret12 / 4
     )
 
-    # Stochastic
-    lowest = x["low"].rolling(14).min()
-    highest = x["high"].rolling(14).max()
+    lowest = x.low.rolling(14).min()
+    highest = x.high.rolling(14).max()
 
     x["stoch_k"] = (
         100
-        * (x["close"] - lowest)
-        / (highest - lowest).replace(
-            0,
-            np.nan,
-        )
+        * (x.close - lowest)
+        / (highest - lowest).replace(0, np.nan)
     )
 
-    x["stoch_d"] = (
-        x["stoch_k"].rolling(3).mean()
+    x["stoch_d"] = x.stoch_k.rolling(3).mean()
+
+    x["atr_pct_rank"] = (
+        x.atr_pct.rolling(100).rank(pct=True)
     )
 
-    # ATR percentile
-    x["atr_rank"] = (
-        x["atr_pct"]
-        .rolling(100)
-        .rank(pct=True)
-    )
-
-    # Candle expansion
     x["range_pct"] = (
-        (x["high"] - x["low"])
-        / x["close"]
-        * 100
+        (x.high - x.low) / x.close * 100
     )
 
     x["range_ratio"] = (
-        x["range_pct"]
-        / x["range_pct"]
-        .rolling(20)
-        .mean()
-        .replace(0, np.nan)
+        x.range_pct
+        / x.range_pct.rolling(20).mean().replace(0, np.nan)
     )
 
-    # Volume breakout
-    x["volume_breakout"] = (
-        x["volume"]
-        / x["volume"]
-        .rolling(55)
-        .max()
-        .replace(0, np.nan)
+    x["vol_breakout"] = (
+        x.volume
+        / x.volume.rolling(55).max().replace(0, np.nan)
     )
 
     return x
 
 
-# ============================================================
-# MULTI-TIMEFRAME
-# ============================================================
-
 @st.cache_data(ttl=300, show_spinner=False)
 def build_mtf(symbol, limit):
-
     d5 = indicators(
-        fetch(
-            symbol,
-            "5m",
-            limit,
-        )
+        fetch(symbol, "5m", limit)
     )
 
     d15 = indicators(
@@ -580,62 +442,53 @@ def build_mtf(symbol, limit):
             "15m",
             min(
                 10000,
-                max(
-                    500,
-                    limit // 3 + 100,
-                ),
+                max(500, limit // 3 + 100),
             ),
         )
     )
 
-    d1h = indicators(
+    d1 = indicators(
         fetch(
             symbol,
             "1h",
             min(
                 5000,
-                max(
-                    500,
-                    limit // 12 + 100,
-                ),
+                max(500, limit // 12 + 100),
             ),
         )
     )
 
-    def prepare_htf(data, suffix):
+    def higher_timeframe(data, suffix):
+        columns = [
+            "time",
+            "close",
+            "ema20",
+            "ema50",
+            "ema200",
+            "rsi",
+            "macd_hist",
+            "adx",
+            "atr_pct",
+            "vol_ratio",
+        ]
 
-        z = data[
-            [
-                "time",
-                "close",
-                "ema20",
-                "ema50",
-                "ema200",
-                "rsi",
-                "macd_hist",
-                "adx",
-                "atr_pct",
-                "volume_ratio",
-            ]
-        ].copy()
+        z = data[columns].copy()
 
-        # Only data from completed HTF candles.
-        z["available"] = z["time"].shift(-1)
-
-        z = z.dropna(
-            subset=["available"]
-        )
+        # A higher-timeframe candle only becomes available
+        # after that candle has closed.
+        z["available"] = z.time.shift(-1)
+        z = z.dropna(subset=["available"])
 
         rename = {
             "close": f"close_{suffix}",
             "ema20": f"ema20_{suffix}",
             "ema50": f"ema50_{suffix}",
             "ema200": f"ema200_{suffix}",
-            "rsi": f"rsi_{suffix}",
-            "macd_hist": f"macd_{suffix}",
-            "adx": f"adx_{suffix}",
-            "atr_pct": f"atrpct_{suffix}",
-            "volume_ratio": f"volume_{suffix}",
+            "rsi": f"rsi{suffix}",
+            "macd_hist": f"macd{suffix}",
+            "adx": f"adx{suffix}",
+            "atr_pct": f"atrpct{suffix}",
+            "vol_ratio": f"vol{suffix}",
         }
 
         return (
@@ -643,19 +496,23 @@ def build_mtf(symbol, limit):
             .drop(columns=["time"])
         )
 
-    out = pd.merge_asof(
+    output = pd.merge_asof(
         d5.sort_values("time"),
-        prepare_htf(d15, "15m")
-        .sort_values("available"),
+        higher_timeframe(
+            d15,
+            "15",
+        ).sort_values("available"),
         left_on="time",
         right_on="available",
         direction="backward",
     )
 
-    out = pd.merge_asof(
-        out.sort_values("time"),
-        prepare_htf(d1h, "1h")
-        .sort_values("available"),
+    output = pd.merge_asof(
+        output.sort_values("time"),
+        higher_timeframe(
+            d1,
+            "1h",
+        ).sort_values("available"),
         left_on="time",
         right_on="available",
         direction="backward",
@@ -664,22 +521,22 @@ def build_mtf(symbol, limit):
     required = [
         "atr",
         "adx",
-        "ema20_15m",
-        "ema50_15m",
-        "ema200_15m",
+        "ema20_15",
+        "ema50_15",
+        "ema200_15",
         "ema20_1h",
         "ema50_1h",
         "ema200_1h",
-        "rsi_15m",
-        "rsi_1h",
-        "adx_15m",
-        "adx_1h",
+        "rsi15",
+        "rsi1h",
+        "adx15",
+        "adx1h",
     ]
 
     missing = [
         column
         for column in required
-        if column not in out.columns
+        if column not in output.columns
     ]
 
     if missing:
@@ -688,94 +545,65 @@ def build_mtf(symbol, limit):
         )
 
     return (
-        out
+        output
         .dropna(subset=required)
         .reset_index(drop=True)
     )
 
 
 # ============================================================
-# STRATEGY SIGNALS
+# Strategy signals
 # ============================================================
 
-def make_signals(data, p):
-
+def make_signals(data, params):
     x = data
-
-    family = p.get(
-        "family",
-        "trend",
-    )
+    family = params.get("family", "trend")
 
     adx_ok = (
-        (x["adx"] >= p.get("adx_min", 18))
-        &
-        (
-            x["adx_1h"]
-            >= p.get("adx_htf", 18)
-        )
+        (x.adx >= params.get("adx_min", 18))
+        & (x.adx1h >= params.get("adx_htf", 18))
     )
 
     volume_ok = (
-        x["volume_ratio"]
-        >= p.get("volume_min", 1.0)
+        x.vol_ratio >= params.get("vol_min", 1.0)
     )
 
-    volatility_ok = x[
-        "vol_regime"
-    ].between(
-        p.get("vol_min", 0.55),
-        p.get("vol_max", 2.8),
+    volatility_ok = x.vol_regime.between(
+        params.get("vol_regime_min", 0.55),
+        params.get("vol_regime_max", 2.8),
     )
-
-    # --------------------------------------------------------
-    # TREND
-    # --------------------------------------------------------
 
     if family == "trend":
-
         long_core = (
-            (x["ema20_1h"] > x["ema50_1h"])
-            &
-            (x["ema50_1h"] > x["ema200_1h"])
-            &
-            (x["ema20_15m"] > x["ema50_15m"])
-            &
-            (
-                x["ema20_slope"]
-                > p.get("slope_min", 0.02)
+            (x.ema20_1h > x.ema50_1h)
+            & (x.ema50_1h > x.ema200_1h)
+            & (x.ema20_15 > x.ema50_15)
+            & (
+                x.ema20_slope
+                > params.get("slope_min", 0.02)
             )
-            &
-            x["rsi"].between(
-                p["rsi_min"],
-                p["rsi_max"],
+            & x.rsi.between(
+                params["rsi_min"],
+                params["rsi_max"],
             )
-            &
-            (x["macd_hist"] > 0)
-            &
-            (x["ret3"] > 0)
+            & (x.macd_hist > 0)
+            & (x.ret3 > 0)
         )
 
         short_core = (
-            (x["ema20_1h"] < x["ema50_1h"])
-            &
-            (x["ema50_1h"] < x["ema200_1h"])
-            &
-            (x["ema20_15m"] < x["ema50_15m"])
-            &
-            (
-                x["ema20_slope"]
-                < -p.get("slope_min", 0.02)
+            (x.ema20_1h < x.ema50_1h)
+            & (x.ema50_1h < x.ema200_1h)
+            & (x.ema20_15 < x.ema50_15)
+            & (
+                x.ema20_slope
+                < -params.get("slope_min", 0.02)
             )
-            &
-            x["rsi"].between(
-                100 - p["rsi_max"],
-                100 - p["rsi_min"],
+            & x.rsi.between(
+                100 - params["rsi_max"],
+                100 - params["rsi_min"],
             )
-            &
-            (x["macd_hist"] < 0)
-            &
-            (x["ret3"] < 0)
+            & (x.macd_hist < 0)
+            & (x.ret3 < 0)
         )
 
         long_score = (
@@ -792,37 +620,28 @@ def make_signals(data, p):
             + volatility_ok.astype(int) * 15
         )
 
-    # --------------------------------------------------------
-    # BREAKOUT
-    # --------------------------------------------------------
-
     elif family == "breakout":
-
         long_core = (
-            (x["close"] > x["high55"])
-            &
-            (x["ema20_15m"] > x["ema50_15m"])
-            &
-            (
-                x["rsi"]
-                > p.get("rsi_break_long", 55)
+            (x.close > x.high55)
+            & (x.ema20_15 > x.ema50_15)
+            & (
+                x.rsi
+                > params.get("rsi_break_long", 55)
             )
         )
 
         short_core = (
-            (x["close"] < x["low55"])
-            &
-            (x["ema20_15m"] < x["ema50_15m"])
-            &
-            (
-                x["rsi"]
-                < p.get("rsi_break_short", 45)
+            (x.close < x.low55)
+            & (x.ema20_15 < x.ema50_15)
+            & (
+                x.rsi
+                < params.get("rsi_break_short", 45)
             )
         )
 
         expansion = (
-            x["range_ratio"]
-            >= p.get("range_ratio", 1.15)
+            x.range_ratio
+            >= params.get("range_ratio", 1.15)
         )
 
         long_score = (
@@ -839,61 +658,40 @@ def make_signals(data, p):
             + adx_ok.astype(int) * 10
         )
 
-    # --------------------------------------------------------
-    # PULLBACK
-    # --------------------------------------------------------
-
     elif family == "pullback":
-
-        pullback = p.get(
+        pullback = params.get(
             "pullback_pct",
             0.005,
         )
 
         long_core = (
-            (x["ema20_1h"] > x["ema50_1h"])
-            &
-            (x["ema50_1h"] > x["ema200_1h"])
-            &
-            (
-                x["close"]
-                <= x["ema20"] * (1 + pullback)
+            (x.ema20_1h > x.ema50_1h)
+            & (x.ema50_1h > x.ema200_1h)
+            & (
+                x.close
+                <= x.ema20 * (1 + pullback)
             )
-            &
-            (x["close"] >= x["ema50"])
-            &
-            x["rsi"].between(
-                p.get("rsi_long_min", 45),
-                p.get("rsi_long_max", 58),
+            & (x.close >= x.ema50)
+            & x.rsi.between(
+                params.get("rsi_long_min", 45),
+                params.get("rsi_long_max", 58),
             )
-            &
-            (
-                x["macd_hist"]
-                > x["macd_hist"].shift(1)
-            )
+            & (x.macd_hist > x.macd_hist.shift(1))
         )
 
         short_core = (
-            (x["ema20_1h"] < x["ema50_1h"])
-            &
-            (x["ema50_1h"] < x["ema200_1h"])
-            &
-            (
-                x["close"]
-                >= x["ema20"] * (1 - pullback)
+            (x.ema20_1h < x.ema50_1h)
+            & (x.ema50_1h < x.ema200_1h)
+            & (
+                x.close
+                >= x.ema20 * (1 - pullback)
             )
-            &
-            (x["close"] <= x["ema50"])
-            &
-            x["rsi"].between(
-                p.get("rsi_short_min", 42),
-                p.get("rsi_short_max", 55),
+            & (x.close <= x.ema50)
+            & x.rsi.between(
+                params.get("rsi_short_min", 42),
+                params.get("rsi_short_max", 55),
             )
-            &
-            (
-                x["macd_hist"]
-                < x["macd_hist"].shift(1)
-            )
+            & (x.macd_hist < x.macd_hist.shift(1))
         )
 
         long_score = (
@@ -910,129 +708,105 @@ def make_signals(data, p):
             + volatility_ok.astype(int) * 10
         )
 
-    # --------------------------------------------------------
-    # MEAN REVERSION
-    # --------------------------------------------------------
-
     elif family == "mean_reversion":
+        z_entry = params.get(
+            "z_entry",
+            1.8,
+        )
+
+        oversold = params.get(
+            "rsi_oversold",
+            32,
+        )
+
+        stoch_long = params.get(
+            "stoch_long",
+            25,
+        )
 
         long_core = (
-            (x["bb_z"] <= -p.get("z_entry", 1.6))
-            &
-            (
-                x["rsi"]
-                <= p.get("rsi_oversold", 32)
-            )
-            &
-            (
-                x["stoch_k"]
-                < p.get("stoch_long", 25)
-            )
-            &
-            (x["close"] > x["close"].shift(1))
+            (x.bb_z <= -z_entry)
+            & (x.rsi <= oversold)
+            & (x.stoch_k < stoch_long)
+            & (x.close > x.close.shift(1))
         )
 
         short_core = (
-            (x["bb_z"] >= p.get("z_entry", 1.6))
-            &
-            (
-                x["rsi"]
-                >= 100 - p.get(
-                    "rsi_oversold",
-                    32,
-                )
-            )
-            &
-            (
-                x["stoch_k"]
-                > 100 - p.get(
-                    "stoch_long",
-                    25,
-                )
-            )
-            &
-            (x["close"] < x["close"].shift(1))
+            (x.bb_z >= z_entry)
+            & (x.rsi >= 100 - oversold)
+            & (x.stoch_k > 100 - stoch_long)
+            & (x.close < x.close.shift(1))
         )
 
-        range_regime = (
-            x["adx"]
-            <= p.get("adx_max", 24)
-        ) & volatility_ok
+        regime = (
+            (x.adx <= params.get("adx_max", 24))
+            & volatility_ok
+        )
+
+        volume_mean_reversion = (
+            x.vol_ratio >= params.get(
+                "vol_min",
+                0.8,
+            )
+        )
 
         long_score = (
             long_core.astype(int) * 70
-            + range_regime.astype(int) * 20
-            + (
-                x["volume_ratio"]
-                >= p.get("volume_min", 0.8)
-            ).astype(int) * 10
+            + regime.astype(int) * 20
+            + volume_mean_reversion.astype(int) * 10
         )
 
         short_score = (
             short_core.astype(int) * 70
-            + range_regime.astype(int) * 20
-            + (
-                x["volume_ratio"]
-                >= p.get("volume_min", 0.8)
-            ).astype(int) * 10
+            + regime.astype(int) * 20
+            + volume_mean_reversion.astype(int) * 10
         )
 
-    # --------------------------------------------------------
-    # MOMENTUM
-    # --------------------------------------------------------
-
     elif family == "momentum":
+        ret3_min = params.get(
+            "ret3_min",
+            0.004,
+        )
+
+        ret12_min = params.get(
+            "ret12_min",
+            0.008,
+        )
 
         long_core = (
-            (
-                x["ret3"]
-                > p.get("ret3_min", 0.004)
-            )
-            &
-            (
-                x["ret12"]
-                > p.get("ret12_min", 0.008)
-            )
-            &
-            (x["macd_hist"] > 0)
-            &
-            (
-                x["rsi"]
-                > p.get("rsi_momentum", 55)
+            (x.ret3 > ret3_min)
+            & (x.ret12 > ret12_min)
+            & (x.macd_hist > 0)
+            & (
+                x.rsi
+                > params.get("rsi_mom", 55)
             )
         )
 
         short_core = (
-            (
-                x["ret3"]
-                < -p.get("ret3_min", 0.004)
-            )
-            &
-            (
-                x["ret12"]
-                < -p.get("ret12_min", 0.008)
-            )
-            &
-            (x["macd_hist"] < 0)
-            &
-            (
-                x["rsi"]
-                < 100 - p.get(
-                    "rsi_momentum",
+            (x.ret3 < -ret3_min)
+            & (x.ret12 < -ret12_min)
+            & (x.macd_hist < 0)
+            & (
+                x.rsi
+                < 100 - params.get(
+                    "rsi_mom",
                     55,
                 )
             )
         )
 
         expansion = (
-            (
-                x["range_ratio"]
-                >= p.get("range_ratio", 1.05)
-            )
-            &
-            (
-                x["atr_rank"]
-                >= p.get("atr_rank", 0.55)
+            (x.range_ratio >= params.get(
+                "range_ratio",
+                1.05,
+            ))
+            & (
+                x.atr_pct_rank
+                >= params.get(
+                    "atr_rank",
+                    0.55,
+                )
             )
         )
 
@@ -1062,128 +836,113 @@ def make_signals(data, p):
 
 
 # ============================================================
-# METRICS
+# Backtest metrics
 # ============================================================
 
-def calculate_metrics(
-    pnls,
-    equity,
-    capital,
-):
-
-    p = np.asarray(
+def calculate_metrics(pnls, equity, capital):
+    pnl_array = np.asarray(
         pnls,
         dtype=float,
     )
 
-    if len(equity) == 0:
-        return {
-            "return": 0.0,
-            "pf": 0.0,
-            "wr": 0.0,
-            "dd": 0.0,
-            "trades": 0,
-            "expectancy": 0.0,
-            "sharpe": 0.0,
-            "sortino": 0.0,
-            "max_loss_streak": 0,
-        }
-
-    gross_profit = (
-        p[p > 0].sum()
-        if len(p)
+    wins = (
+        pnl_array[pnl_array > 0].sum()
+        if len(pnl_array)
         else 0.0
     )
 
-    gross_loss = abs(
-        p[p < 0].sum()
-    ) if len(p) else 0.0
+    losses = (
+        abs(pnl_array[pnl_array < 0].sum())
+        if len(pnl_array)
+        else 0.0
+    )
 
-    if gross_loss > 0:
-        profit_factor = (
-            gross_profit
-            / gross_loss
-        )
-    elif gross_profit > 0:
+    if losses:
+        profit_factor = wins / losses
+    elif wins:
         profit_factor = np.inf
     else:
         profit_factor = 0.0
 
     win_rate = (
-        (p > 0).mean() * 100
-        if len(p)
+        (pnl_array > 0).mean() * 100
+        if len(pnl_array)
         else 0.0
     )
 
-    total_return = (
-        equity[-1] / capital - 1
-    ) * 100
-
-    peaks = np.maximum.accumulate(
-        equity
+    final_equity = (
+        equity[-1]
+        if len(equity)
+        else capital
     )
 
-    drawdowns = (
-        equity / peaks - 1
+    return_pct = (
+        final_equity / capital - 1
     ) * 100
 
-    max_drawdown = (
-        float(drawdowns.min())
-        if len(drawdowns)
+    drawdown = (
+        np.min(
+            equity
+            / np.maximum.accumulate(equity)
+            - 1
+        )
+        * 100
+        if len(equity)
         else 0.0
     )
 
     expectancy = (
-        float(np.mean(p))
-        if len(p)
+        float(np.mean(pnl_array))
+        if len(pnl_array)
         else 0.0
     )
 
-    if len(p) > 1:
+    if len(pnl_array) > 1:
         std = float(
             np.std(
-                p,
+                pnl_array,
                 ddof=1,
             )
         )
-
-        if std > 0:
-            sharpe = float(
-                np.mean(p)
-                / std
-                * np.sqrt(len(p))
-            )
-        else:
-            sharpe = 0.0
     else:
-        sharpe = 0.0
+        std = 0.0
 
-    negative = p[p < 0]
+    sharpe = (
+        float(
+            np.mean(pnl_array)
+            / std
+            * np.sqrt(len(pnl_array))
+        )
+        if std > 0
+        else 0.0
+    )
+
+    negative = pnl_array[pnl_array < 0]
 
     if len(negative) > 1:
-        downside_std = float(
+        downside = float(
             np.std(
                 negative,
                 ddof=1,
             )
         )
-
-        if downside_std > 0:
-            sortino = float(
-                np.mean(p)
-                / downside_std
-                * np.sqrt(len(p))
-            )
-        else:
-            sortino = 0.0
     else:
-        sortino = 0.0
+        downside = 0.0
 
-    max_loss_streak = 0
+    sortino = (
+        float(
+            np.mean(pnl_array)
+            / downside
+            * np.sqrt(len(pnl_array))
+        )
+        if downside > 0
+        else 0.0
+    )
+
     current_streak = 0
+    max_loss_streak = 0
 
-    for value in p:
-
+    for value in pnl_array:
         if value < 0:
             current_streak += 1
             max_loss_streak = max(
@@ -1194,22 +953,20 @@ def calculate_metrics(
             current_streak = 0
 
     return {
-        "return": float(total_return),
+        "return": float(return_pct),
         "pf": float(profit_factor),
         "wr": float(win_rate),
-        "dd": float(max_drawdown),
-        "trades": int(len(p)),
+        "dd": float(drawdown),
+        "trades": int(len(pnl_array)),
         "expectancy": expectancy,
         "sharpe": sharpe,
         "sortino": sortino,
-        "max_loss_streak": int(
-            max_loss_streak
-        ),
+        "max_loss_streak": int(max_loss_streak),
     }
 
 
 # ============================================================
-# BACKTEST ENGINE
+# Backtest engine
 # ============================================================
 
 def run_backtest(
@@ -1223,85 +980,66 @@ def run_backtest(
     direction=None,
     return_pnls=False,
 ):
-
-    open_prices = data["open"].to_numpy(
-        dtype=float
-    )
-
-    close_prices = data["close"].to_numpy(
-        dtype=float
-    )
-
-    highs = data["high"].to_numpy(
-        dtype=float
-    )
-
-    lows = data["low"].to_numpy(
-        dtype=float
-    )
-
-    atr = data["atr"].to_numpy(
-        dtype=float
-    )
+    opens = data.open.to_numpy(float)
+    closes = data.close.to_numpy(float)
+    highs = data.high.to_numpy(float)
+    lows = data.low.to_numpy(float)
+    atr_values = data.atr.to_numpy(float)
 
     long_score, short_score = make_signals(
         data,
         params,
     )
 
-    threshold = int(
-        params["threshold"]
-    )
+    threshold = params["threshold"]
 
     if mode == "Agressief":
         threshold -= 5
 
-    min_edge = int(
-        params.get(
-            "min_edge",
-            5,
-        )
-    )
-
-    long_signal = (
-        (long_score >= threshold)
-        &
-        (
-            long_score
-            > short_score + min_edge
-        )
-    )
-
-    short_signal = (
-        (short_score >= threshold)
-        &
-        (
-            short_score
-            > long_score + min_edge
-        )
-    )
-
     if direction == "LONG":
-        signal = long_signal
+        signals = (
+            (long_score >= threshold)
+            & (
+                long_score
+                > short_score + params["min_edge"]
+            )
+        )
 
     elif direction == "SHORT":
-        signal = short_signal
+        signals = (
+            (short_score >= threshold)
+            & (
+                short_score
+                > long_score + params["min_edge"]
+            )
+        )
 
     else:
-        signal = None
+        signals_long = (
+            (long_score >= threshold)
+            & (
+                long_score
+                > short_score + params["min_edge"]
+            )
+        )
+
+        signals_short = (
+            (short_score >= threshold)
+            & (
+                short_score
+                > long_score + params["min_edge"]
+            )
+        )
 
     cash = float(capital)
 
     position = 0
-
     entry = 0.0
     stop = 0.0
     take_profit = 0.0
     quantity = 0.0
-
     age = 0
-
-    initial_risk_distance = 0.0
+    risk_distance = 0.0
     best_price = 0.0
 
     pnls = []
@@ -1314,32 +1052,23 @@ def run_backtest(
     equity[0] = cash
 
     for i in range(1, len(data)):
-
         exited = False
 
-        # ====================================================
-        # MANAGE EXISTING POSITION
-        # ====================================================
-
+        # -------------------------
+        # Manage open position
+        # -------------------------
         if position != 0:
-
             age += 1
-
             exit_price = None
 
-            # ------------------------------------------------
-            # LONG
-            # ------------------------------------------------
-
             if position == 1:
-
                 best_price = max(
                     best_price,
                     highs[i],
                 )
 
-                trail_trigger = (
-                    initial_risk_distance
+                trigger = (
+                    risk_distance
                     * params.get(
                         "trail_trigger_r",
                         1.0,
@@ -1348,12 +1077,11 @@ def run_backtest(
 
                 if (
                     best_price - entry
-                    >= trail_trigger
+                    >= trigger
                 ):
-
-                    trailing_stop = (
+                    trail = (
                         best_price
-                        - atr[i]
+                        - atr_values[i]
                         * params.get(
                             "trail_atr",
                             1.0,
@@ -1362,7 +1090,7 @@ def run_backtest(
 
                     stop = max(
                         stop,
-                        trailing_stop,
+                        trail,
                     )
 
                 if lows[i] <= stop:
@@ -1371,19 +1099,14 @@ def run_backtest(
                 elif highs[i] >= take_profit:
                     exit_price = take_profit
 
-            # ------------------------------------------------
-            # SHORT
-            # ------------------------------------------------
-
             else:
-
                 best_price = min(
                     best_price,
                     lows[i],
                 )
 
-                trail_trigger = (
-                    initial_risk_distance
+                trigger = (
+                    risk_distance
                     * params.get(
                         "trail_trigger_r",
                         1.0,
@@ -1392,12 +1115,11 @@ def run_backtest(
 
                 if (
                     entry - best_price
-                    >= trail_trigger
+                    >= trigger
                 ):
-
-                    trailing_stop = (
+                    trail = (
                         best_price
-                        + atr[i]
+                        + atr_values[i]
                         * params.get(
                             "trail_atr",
                             1.0,
@@ -1406,7 +1128,7 @@ def run_backtest(
 
                     stop = min(
                         stop,
-                        trailing_stop,
+                        trail,
                     )
 
                 if highs[i] >= stop:
@@ -1415,118 +1137,87 @@ def run_backtest(
                 elif lows[i] <= take_profit:
                     exit_price = take_profit
 
-            # ------------------------------------------------
-            # TIME EXIT
-            # ------------------------------------------------
-
             if (
                 exit_price is None
-                and age
-                >= params["max_bars"]
+                and age >= params["max_bars"]
             ):
-                exit_price = close_prices[i]
-
-            # ------------------------------------------------
-            # EXECUTE EXIT
-            # ------------------------------------------------
+                exit_price = closes[i]
 
             if exit_price is not None:
-
                 if position == 1:
-
-                    execution_exit = (
+                    executed_exit = (
                         exit_price
-                        * (
-                            1
-                            - slip / 100
-                        )
+                        * (1 - slip / 100)
                     )
 
                     gross = (
-                        execution_exit
-                        - entry
+                        executed_exit - entry
                     ) * quantity
 
                 else:
-
-                    execution_exit = (
+                    executed_exit = (
                         exit_price
-                        * (
-                            1
-                            + slip / 100
-                        )
+                        * (1 + slip / 100)
                     )
 
                     gross = (
-                        entry
-                        - execution_exit
+                        entry - executed_exit
                     ) * quantity
 
                 fees = (
                     entry * quantity
-                    + execution_exit * quantity
+                    + executed_exit * quantity
                 ) * fee / 100
 
                 pnl = gross - fees
 
                 cash += pnl
-
-                pnls.append(
-                    float(pnl)
-                )
+                pnls.append(float(pnl))
 
                 position = 0
                 exited = True
 
-        # ====================================================
-        # NEW POSITION
-        # ====================================================
-
+        # -------------------------
+        # New entry
+        # -------------------------
         if (
             position == 0
             and not exited
             and cash > 0
             and i + 1 < len(data)
         ):
-
             if direction is None:
-
-                if long_signal[i - 1]:
+                if signals_long[i - 1]:
                     side = 1
-
-                elif short_signal[i - 1]:
+                elif signals_short[i - 1]:
                     side = -1
-
                 else:
                     side = 0
 
             else:
-
                 side = (
                     1
-                    if signal[i - 1]
+                    if signals[i - 1]
                     else 0
                 )
 
-                if direction == "SHORT":
-                    side = (
-                        -1
-                        if signal[i - 1]
-                        else 0
-                    )
+                if (
+                    direction == "SHORT"
+                    and signals[i - 1]
+                ):
+                    side = -1
 
             if (
-                side != 0
+                side
                 and np.isfinite(
-                    atr[i - 1]
+                    atr_values[i - 1]
                 )
-                and atr[i - 1] > 0
+                and atr_values[i - 1] > 0
             ):
-
                 distance = max(
-                    atr[i - 1]
+                    atr_values[i - 1]
                     * params["sl_atr"],
-                    close_prices[i - 1]
+                    closes[i - 1]
                     * params["min_stop_pct"]
                     / 100,
                 )
@@ -1538,23 +1229,14 @@ def run_backtest(
                     / distance
                 )
 
-                # --------------------------------------------
-                # LONG ENTRY
-                # --------------------------------------------
-
                 if side == 1:
-
                     entry = (
-                        open_prices[i]
-                        * (
-                            1
-                            + slip / 100
-                        )
+                        opens[i]
+                        * (1 + slip / 100)
                     )
 
                     stop = (
-                        entry
-                        - distance
+                        entry - distance
                     )
 
                     take_profit = (
@@ -1562,26 +1244,15 @@ def run_backtest(
                         + distance
                         * params["rr"]
                     )
-
-                    best_price = entry
-
-                # --------------------------------------------
-                # SHORT ENTRY
-                # --------------------------------------------
 
                 else:
-
                     entry = (
-                        open_prices[i]
-                        * (
-                            1
-                            - slip / 100
-                        )
+                        opens[i]
+                        * (1 - slip / 100)
                     )
 
                     stop = (
-                        entry
-                        + distance
+                        entry + distance
                     )
 
                     take_profit = (
@@ -1590,33 +1261,26 @@ def run_backtest(
                         * params["rr"]
                     )
 
-                    best_price = entry
-
-                initial_risk_distance = distance
-
+                risk_distance = distance
+                best_price = entry
                 position = side
-
                 age = 0
-
-        # ====================================================
-        # EQUITY
-        # ====================================================
 
         equity[i] = cash
 
-    metrics = calculate_metrics(
+    result = calculate_metrics(
         pnls,
         equity,
         capital,
     )
 
     if return_pnls:
-        metrics["pnls"] = np.asarray(
+        result["pnls"] = np.asarray(
             pnls,
             dtype=float,
         )
 
-    return metrics
+    return result
 
 
 def backtest(
@@ -1658,29 +1322,198 @@ def backtest_direction(
         risk,
         fee,
         slip,
-        direction=direction,
-        return_pnls=return_pnls,
+        direction,
+        return_pnls,
     )
 
 
 # ============================================================
-# MONTE CARLO
+# Strategy grid
+# ============================================================
+
+STRATEGIES = []
+
+# Trend
+for sl_atr, rr in [
+    (1.25, 1.5),
+    (1.5, 2.0),
+    (2.0, 2.5),
+]:
+    for threshold in [60, 70, 80]:
+        for rsi_min, rsi_max in [
+            (50, 65),
+            (52, 68),
+            (55, 70),
+        ]:
+            STRATEGIES.append({
+                "family": "trend",
+                "rsi_min": rsi_min,
+                "rsi_max": rsi_max,
+                "adx_min": 18,
+                "adx_htf": 18,
+                "vol_min": 1.0,
+                "vol_regime_min": 0.55,
+                "vol_regime_max": 2.8,
+                "slope_min": 0.02,
+                "sl_atr": sl_atr,
+                "rr": rr,
+                "threshold": threshold,
+                "min_edge": 8,
+                "max_bars": 48,
+                "min_stop_pct": 0.35,
+                "trail_atr": 1.0,
+                "trail_trigger_r": 1.0,
+            })
+
+# Breakout
+for sl_atr, rr in [
+    (1.25, 1.5),
+    (1.5, 2.0),
+    (2.0, 2.5),
+]:
+    for threshold in [60, 70, 80]:
+        for range_ratio in [
+            1.10,
+            1.25,
+            1.40,
+        ]:
+            STRATEGIES.append({
+                "family": "breakout",
+                "adx_min": 18,
+                "adx_htf": 18,
+                "vol_min": 1.0,
+                "vol_regime_min": 0.55,
+                "vol_regime_max": 3.0,
+                "range_ratio": range_ratio,
+                "rsi_break_long": 55,
+                "rsi_break_short": 45,
+                "sl_atr": sl_atr,
+                "rr": rr,
+                "threshold": threshold,
+                "min_edge": 5,
+                "max_bars": 36,
+                "min_stop_pct": 0.35,
+                "trail_atr": 1.1,
+                "trail_trigger_r": 1.0,
+            })
+
+# Pullback
+for sl_atr, rr in [
+    (1.25, 1.5),
+    (1.5, 2.0),
+    (2.0, 2.5),
+]:
+    for threshold in [60, 70, 80]:
+        for pullback_pct in [
+            0.003,
+            0.005,
+            0.008,
+        ]:
+            STRATEGIES.append({
+                "family": "pullback",
+                "adx_min": 18,
+                "adx_htf": 18,
+                "vol_min": 0.8,
+                "vol_regime_min": 0.45,
+                "vol_regime_max": 2.5,
+                "pullback_pct": pullback_pct,
+                "rsi_long_min": 45,
+                "rsi_long_max": 58,
+                "rsi_short_min": 42,
+                "rsi_short_max": 55,
+                "sl_atr": sl_atr,
+                "rr": rr,
+                "threshold": threshold,
+                "min_edge": 5,
+                "max_bars": 48,
+                "min_stop_pct": 0.30,
+                "trail_atr": 1.0,
+                "trail_trigger_r": 1.0,
+            })
+
+# Mean reversion
+for sl_atr, rr in [
+    (1.25, 1.5),
+    (1.5, 2.0),
+]:
+    for threshold in [60, 70]:
+        for z_entry in [
+            1.5,
+            1.8,
+            2.1,
+        ]:
+            STRATEGIES.append({
+                "family": "mean_reversion",
+                "adx_min": 0,
+                "adx_htf": 0,
+                "adx_max": 24,
+                "vol_min": 0.8,
+                "vol_regime_min": 0.45,
+                "vol_regime_max": 1.5,
+                "z_entry": z_entry,
+                "rsi_oversold": 32,
+                "stoch_long": 25,
+                "sl_atr": sl_atr,
+                "rr": rr,
+                "threshold": threshold,
+                "min_edge": 5,
+                "max_bars": 24,
+                "min_stop_pct": 0.30,
+                "trail_atr": 0.9,
+                "trail_trigger_r": 1.0,
+            })
+
+# Momentum
+for sl_atr, rr in [
+    (1.25, 1.5),
+    (1.5, 2.0),
+    (2.0, 2.5),
+]:
+    for threshold in [60, 70, 80]:
+        for momentum in [
+            0.003,
+            0.005,
+            0.008,
+        ]:
+            STRATEGIES.append({
+                "family": "momentum",
+                "adx_min": 18,
+                "adx_htf": 18,
+                "vol_min": 1.0,
+                "vol_regime_min": 0.55,
+                "vol_regime_max": 3.0,
+                "ret3_min": momentum,
+                "ret12_min": momentum * 2,
+                "rsi_mom": 55,
+                "range_ratio": 1.05,
+                "atr_rank": 0.55,
+                "sl_atr": sl_atr,
+                "rr": rr,
+                "threshold": threshold,
+                "min_edge": 5,
+                "max_bars": 36,
+                "min_stop_pct": 0.35,
+                "trail_atr": 1.1,
+                "trail_trigger_r": 1.0,
+            })
+
+
+# ============================================================
+# Monte Carlo
 # ============================================================
 
 def monte_carlo_stats(
     pnls,
-    capital,
+    capital=1000.0,
     simulations=1000,
     seed=42,
 ):
-
-    p = np.asarray(
+    values = np.asarray(
         pnls,
         dtype=float,
     )
 
-    if len(p) < 15:
-
+    if len(values) < 15:
         return {
             "median_return": np.nan,
             "p05_return": np.nan,
@@ -1689,48 +1522,37 @@ def monte_carlo_stats(
             "p95_dd": np.nan,
         }
 
-    rng = np.random.default_rng(
-        seed
-    )
+    rng = np.random.default_rng(seed)
 
     returns = np.empty(
-        simulations
+        simulations,
+        dtype=float,
     )
 
     drawdowns = np.empty(
-        simulations
+        simulations,
+        dtype=float,
     )
 
-    for j in range(simulations):
-
+    for index in range(simulations):
         sample = rng.choice(
-            p,
-            size=len(p),
+            values,
+            size=len(values),
             replace=True,
         )
 
-        equity = capital + np.cumsum(
-            sample
+        equity = capital + np.cumsum(sample)
+        curve = np.r_[capital, equity]
+
+        peak = np.maximum.accumulate(curve)
+
+        drawdowns[index] = np.min(
+            (curve / peak - 1) * 100
         )
 
-        curve = np.r_[
-            capital,
-            equity,
-        ]
-
-        peaks = np.maximum.accumulate(
-            curve
-        )
-
-        dd = (
-            curve / peaks - 1
-        ) * 100
-
-        returns[j] = (
+        returns[index] = (
             equity[-1] / capital - 1
         ) * 100
-
-        drawdowns[j] = dd.min()
 
     return {
         "median_return": float(
@@ -1761,242 +1583,7 @@ def monte_carlo_stats(
 
 
 # ============================================================
-# STRATEGY GRID
-# ============================================================
-
-STRATEGIES = []
-
-
-# ------------------------------------------------------------
-# TREND
-# ------------------------------------------------------------
-
-for sl_atr, rr in [
-    (1.25, 1.5),
-    (1.5, 2.0),
-    (2.0, 2.5),
-]:
-
-    for threshold in [
-        60,
-        70,
-        80,
-    ]:
-
-        for rsi_min, rsi_max in [
-            (50, 65),
-            (52, 68),
-            (55, 70),
-        ]:
-
-            STRATEGIES.append(
-                {
-                    "family": "trend",
-                    "rsi_min": rsi_min,
-                    "rsi_max": rsi_max,
-                    "adx_min": 18,
-                    "adx_htf": 18,
-                    "volume_min": 1.0,
-                    "vol_min": 0.55,
-                    "vol_max": 2.8,
-                    "slope_min": 0.02,
-                    "sl_atr": sl_atr,
-                    "rr": rr,
-                    "threshold": threshold,
-                    "min_edge": 8,
-                    "max_bars": 48,
-                    "min_stop_pct": 0.35,
-                    "trail_atr": 1.0,
-                    "trail_trigger_r": 1.0,
-                }
-            )
-
-
-# ------------------------------------------------------------
-# BREAKOUT
-# ------------------------------------------------------------
-
-for sl_atr, rr in [
-    (1.25, 1.5),
-    (1.5, 2.0),
-    (2.0, 2.5),
-]:
-
-    for threshold in [
-        60,
-        70,
-        80,
-    ]:
-
-        for range_ratio in [
-            1.10,
-            1.25,
-            1.40,
-        ]:
-
-            STRATEGIES.append(
-                {
-                    "family": "breakout",
-                    "adx_min": 18,
-                    "adx_htf": 18,
-                    "volume_min": 1.0,
-                    "vol_min": 0.55,
-                    "vol_max": 3.0,
-                    "range_ratio": range_ratio,
-                    "rsi_break_long": 55,
-                    "rsi_break_short": 45,
-                    "sl_atr": sl_atr,
-                    "rr": rr,
-                    "threshold": threshold,
-                    "min_edge": 5,
-                    "max_bars": 36,
-                    "min_stop_pct": 0.35,
-                    "trail_atr": 1.1,
-                    "trail_trigger_r": 1.0,
-                }
-            )
-
-
-# ------------------------------------------------------------
-# PULLBACK
-# ------------------------------------------------------------
-
-for sl_atr, rr in [
-    (1.25, 1.5),
-    (1.5, 2.0),
-    (2.0, 2.5),
-]:
-
-    for threshold in [
-        60,
-        70,
-        80,
-    ]:
-
-        for pullback_pct in [
-            0.003,
-            0.005,
-            0.008,
-        ]:
-
-            STRATEGIES.append(
-                {
-                    "family": "pullback",
-                    "adx_min": 18,
-                    "adx_htf": 18,
-                    "volume_min": 0.8,
-                    "vol_min": 0.45,
-                    "vol_max": 2.5,
-                    "pullback_pct": pullback_pct,
-                    "rsi_long_min": 45,
-                    "rsi_long_max": 58,
-                    "rsi_short_min": 42,
-                    "rsi_short_max": 55,
-                    "sl_atr": sl_atr,
-                    "rr": rr,
-                    "threshold": threshold,
-                    "min_edge": 5,
-                    "max_bars": 48,
-                    "min_stop_pct": 0.30,
-                    "trail_atr": 1.0,
-                    "trail_trigger_r": 1.0,
-                }
-            )
-
-
-# ------------------------------------------------------------
-# MEAN REVERSION
-# ------------------------------------------------------------
-
-for sl_atr, rr in [
-    (1.25, 1.5),
-    (1.5, 2.0),
-]:
-
-    for threshold in [
-        60,
-        70,
-    ]:
-
-        for z_entry in [
-            1.5,
-            1.8,
-            2.1,
-        ]:
-
-            STRATEGIES.append(
-                {
-                    "family": "mean_reversion",
-                    "adx_min": 0,
-                    "adx_htf": 0,
-                    "adx_max": 24,
-                    "volume_min": 0.8,
-                    "vol_min": 0.45,
-                    "vol_max": 1.5,
-                    "z_entry": z_entry,
-                    "rsi_oversold": 32,
-                    "stoch_long": 25,
-                    "sl_atr": sl_atr,
-                    "rr": rr,
-                    "threshold": threshold,
-                    "min_edge": 5,
-                    "max_bars": 24,
-                    "min_stop_pct": 0.30,
-                    "trail_atr": 0.9,
-                    "trail_trigger_r": 1.0,
-                }
-            )
-
-
-# ------------------------------------------------------------
-# MOMENTUM
-# ------------------------------------------------------------
-
-for sl_atr, rr in [
-    (1.25, 1.5),
-    (1.5, 2.0),
-    (2.0, 2.5),
-]:
-
-    for threshold in [
-        60,
-        70,
-        80,
-    ]:
-
-        for momentum in [
-            0.003,
-            0.005,
-            0.008,
-        ]:
-
-            STRATEGIES.append(
-                {
-                    "family": "momentum",
-                    "adx_min": 18,
-                    "adx_htf": 18,
-                    "volume_min": 1.0,
-                    "vol_min": 0.55,
-                    "vol_max": 3.0,
-                    "ret3_min": momentum,
-                    "ret12_min": momentum * 2,
-                    "rsi_momentum": 55,
-                    "range_ratio": 1.05,
-                    "atr_rank": 0.55,
-                    "sl_atr": sl_atr,
-                    "rr": rr,
-                    "threshold": threshold,
-                    "min_edge": 5,
-                    "max_bars": 36,
-                    "min_stop_pct": 0.35,
-                    "trail_atr": 1.1,
-                    "trail_trigger_r": 1.0,
-                }
-            )
-
-
-# ============================================================
-# STABILITY
+# Stability
 # ============================================================
 
 def strategy_stability(
@@ -2007,25 +1594,31 @@ def strategy_stability(
     risk,
     fee,
     slip,
-    direction,
 ):
+    family = params.get(
+        "family",
+        "trend",
+    )
 
-    family = params["family"]
+    direction = params.get(
+        "direction",
+        "LONG",
+    )
 
     peers = [
-        candidate
-        for candidate in STRATEGIES
-        if candidate["family"] == family
+        strategy
+        for strategy in STRATEGIES
+        if strategy.get("family") == family
     ]
 
     if not peers:
         return 0.0
 
-    results = []
+    checks = []
 
     n = len(data)
 
-    validation_ranges = [
+    ranges = [
         (
             int(n * 0.35),
             int(n * 0.50),
@@ -2040,14 +1633,11 @@ def strategy_stability(
         ),
     ]
 
-    # Test only a representative neighborhood
-    # to keep the application reasonably fast.
-    for candidate in peers:
+    # Limit the neighborhood to avoid excessive runtime.
+    for peer in peers[:20]:
+        peer_results = []
 
-        folds = []
-
-        for start, end in validation_ranges:
-
+        for start, end in ranges:
             validation = (
                 data.iloc[start:end]
                 .reset_index(drop=True)
@@ -2055,7 +1645,7 @@ def strategy_stability(
 
             result = backtest_direction(
                 validation,
-                candidate,
+                peer,
                 mode,
                 capital,
                 risk,
@@ -2064,40 +1654,42 @@ def strategy_stability(
                 direction,
             )
 
-            folds.append(result)
+            peer_results.append(result)
 
-        positive = sum(
-            result["return"] > 0
-            for result in folds
-        )
+        average_pf = np.mean([
+            min(result["pf"], 3)
+            if np.isfinite(result["pf"])
+            else 3
+            for result in peer_results
+        ])
 
-        profitable = sum(
-            result["pf"] >= 1.0
-            for result in folds
-        )
+        average_return = np.mean([
+            result["return"]
+            for result in peer_results
+        ])
 
         trades = sum(
             result["trades"]
-            for result in folds
+            for result in peer_results
         )
 
-        good = (
-            positive >= 2
-            and profitable >= 2
+        stable = (
+            average_return > 0
+            and average_pf >= 1.0
             and trades >= 15
         )
 
-        results.append(
-            bool(good)
-        )
+        checks.append(stable)
 
-    return float(
-        np.mean(results)
-    ) if results else 0.0
+    return (
+        float(np.mean(checks))
+        if checks
+        else 0.0
+    )
 
 
 # ============================================================
-# CANDIDATE STATUS
+# Candidate scoring
 # ============================================================
 
 def candidate_status(
@@ -2106,7 +1698,6 @@ def candidate_status(
     monte_carlo,
     stability,
 ):
-
     wf_good = sum(
         result["return"] > 0
         and result["pf"] >= 1.05
@@ -2127,52 +1718,30 @@ def candidate_status(
         and monte_carlo["p05_return"] > -10
     )
 
-    stability_ok = (
-        stability >= 0.60
-    )
-
-    confidence = (
-        min(wf_good / 3, 1)
-        * 25
-        +
-        min(
-            max(oos["pf"] - 1, 0),
-            1,
-        )
-        * 25
-        +
-        min(
-            max(oos["return"], 0)
-            / 20,
-            1,
-        )
-        * 15
-        +
-        min(
-            max(oos["dd"] + 20, 0)
-            / 20,
-            1,
-        )
-        * 10
-        +
-        min(
-            max(
-                monte_carlo[
-                    "p05_return"
-                ],
-                0,
-            )
-            / 10,
-            1,
-        )
-        * 10
-        +
-        stability
-        * 15
-    )
+    stable_ok = stability >= 0.60
 
     confidence = round(
-        confidence,
+        min(wf_good / 3, 1) * 25
+        + min(
+            max(oos["pf"] - 1, 0),
+            1,
+        ) * 25
+        + min(
+            max(oos["return"], 0) / 20,
+            1,
+        ) * 15
+        + min(
+            max(oos["dd"] + 20, 0) / 20,
+            1,
+        ) * 10
+        + min(
+            max(
+                monte_carlo["p05_return"],
+                0,
+            ) / 10,
+            1,
+        ) * 10
+        + stability * 15,
         1,
     )
 
@@ -2180,7 +1749,7 @@ def candidate_status(
         wf_good >= 2
         and hard_oos
         and mc_ok
-        and stability_ok
+        and stable_ok
     ):
         status = "TRADE"
 
@@ -2227,26 +1796,25 @@ def candidate_status(
             "MC P05 < -10%"
         )
 
-    if not stability_ok:
+    if not stable_ok:
         reasons.append(
             f"stability {stability:.0%} < 60%"
         )
 
-    reason = (
-        "; ".join(reasons)
-        if reasons
-        else "Alle hoofdcriteria gehaald"
-    )
+    if not reasons:
+        reason_text = "Alle hoofdcriteria gehaald"
+    else:
+        reason_text = "; ".join(reasons)
 
     return (
         status,
         confidence,
-        reason,
+        reason_text,
     )
 
 
 # ============================================================
-# STRATEGY DISCOVERY
+# Strategy Discovery
 # ============================================================
 
 def strategy_discovery(
@@ -2258,25 +1826,18 @@ def strategy_discovery(
     fee,
     slip,
 ):
-
-    limit = int(
-        days
-        * 24
-        * 12
-    )
-
     data = build_mtf(
         symbol,
-        limit,
+        int(days * 24 * 12),
     )
 
     if len(data) < 500:
-
         return {
             "Coin": symbol,
             "Status": "NO DATA",
             "Reason": (
-                f"Te weinig data ({len(data)})"
+                f"Te weinig bruikbare candles: "
+                f"{len(data)}"
             ),
         }
 
@@ -2308,25 +1869,17 @@ def strategy_discovery(
         ),
     ]
 
-    # ========================================================
-    # DISCOVERY
-    # ========================================================
-
-    for base_params in STRATEGIES:
-
+    for params in STRATEGIES:
         for direction in [
             "LONG",
             "SHORT",
         ]:
-
-            params = dict(
-                base_params
-            )
+            candidate = dict(params)
+            candidate["direction"] = direction
 
             folds = []
 
             for start, end in validation_ranges:
-
                 validation = (
                     data.iloc[start:end]
                     .reset_index(drop=True)
@@ -2334,7 +1887,7 @@ def strategy_discovery(
 
                 result = backtest_direction(
                     validation,
-                    params,
+                    candidate,
                     mode,
                     capital,
                     risk,
@@ -2343,9 +1896,7 @@ def strategy_discovery(
                     direction,
                 )
 
-                folds.append(
-                    result
-                )
+                folds.append(result)
 
             wf_good = sum(
                 result["return"] > 0
@@ -2353,26 +1904,17 @@ def strategy_discovery(
                 for result in folds
             )
 
-            average_pf = np.mean(
-                [
-                    min(
-                        result["pf"],
-                        3,
-                    )
-                    if np.isfinite(
-                        result["pf"]
-                    )
-                    else 3
-                    for result in folds
-                ]
-            )
+            average_pf = np.mean([
+                min(result["pf"], 3)
+                if np.isfinite(result["pf"])
+                else 3
+                for result in folds
+            ])
 
-            average_return = np.mean(
-                [
-                    result["return"]
-                    for result in folds
-                ]
-            )
+            average_return = np.mean([
+                result["return"]
+                for result in folds
+            ])
 
             total_trades = sum(
                 result["trades"]
@@ -2384,21 +1926,16 @@ def strategy_discovery(
 
             discovery_score = (
                 wf_good / 3 * 40
-                +
-                min(
+                + min(
                     average_pf / 1.5,
                     1,
                 ) * 25
-                +
-                min(
-                    max(
-                        average_return,
-                        0,
-                    ) / 15,
+                + min(
+                    max(average_return, 0)
+                    / 15,
                     1,
                 ) * 20
-                +
-                min(
+                + min(
                     total_trades / 45,
                     1,
                 ) * 15
@@ -2407,20 +1944,19 @@ def strategy_discovery(
             candidates.append(
                 (
                     discovery_score,
-                    params,
+                    candidate,
                     direction,
                     folds,
                 )
             )
 
     if not candidates:
-
         return {
             "Coin": symbol,
             "Status": "NO EDGE",
             "Reason": (
                 "Geen strategie haalde "
-                "de minimale activiteit."
+                "de minimumvoorwaarden."
             ),
         }
 
@@ -2429,21 +1965,14 @@ def strategy_discovery(
         reverse=True,
     )
 
-    # Only investigate the strongest candidates.
-    finalists = candidates[:15]
-
     best = None
-
-    # ========================================================
-    # OOS + STABILITY + MONTE CARLO
-    # ========================================================
 
     for (
         discovery_score,
         params,
         direction,
         folds,
-    ) in finalists:
+    ) in candidates[:12]:
 
         stability = strategy_stability(
             data,
@@ -2453,7 +1982,6 @@ def strategy_discovery(
             risk,
             fee,
             slip,
-            direction,
         )
 
         oos = backtest_direction(
@@ -2486,23 +2014,22 @@ def strategy_discovery(
             )
         )
 
-        ranking = (
-            1 if status == "TRADE"
-            else 0,
+        safe_pf = (
+            oos["pf"]
+            if np.isfinite(oos["pf"])
+            else 3
+        )
+
+        rank = (
+            1 if status == "TRADE" else 0,
             confidence,
             stability,
-            (
-                oos["pf"]
-                if np.isfinite(
-                    oos["pf"]
-                )
-                else 3
-            ),
+            safe_pf,
             oos["return"],
         )
 
-        item = (
-            ranking,
+        candidate_result = (
+            rank,
             discovery_score,
             params,
             direction,
@@ -2517,12 +2044,12 @@ def strategy_discovery(
 
         if (
             best is None
-            or ranking > best[0]
+            or rank > best[0]
         ):
-            best = item
+            best = candidate_result
 
     (
-        _ranking,
+        _rank,
         discovery_score,
         params,
         direction,
@@ -2534,10 +2061,6 @@ def strategy_discovery(
         reason,
         stability,
     ) = best
-
-    # ========================================================
-    # OPPOSITE DIRECTION
-    # ========================================================
 
     opposite = (
         "SHORT"
@@ -2556,9 +2079,11 @@ def strategy_discovery(
         opposite,
     )
 
-    # ========================================================
-    # RESULT
-    # ========================================================
+    wf_count = sum(
+        result["return"] > 0
+        and result["pf"] >= 1.05
+        for result in folds
+    )
 
     return {
         "Coin": symbol,
@@ -2574,13 +2099,7 @@ def strategy_discovery(
             float(discovery_score),
             1,
         ),
-        "WF": (
-            f"{sum("
-            "result['return'] > 0 "
-            "and result['pf'] >= 1.05 "
-            "for result in folds"
-            ")}/3"
-        ),
+        "WF": f"{wf_count}/3",
         "OOS PF": round(
             oos["pf"],
             3,
@@ -2589,9 +2108,7 @@ def strategy_discovery(
             oos["return"],
             2,
         ),
-        "OOS trades": oos[
-            "trades"
-        ],
+        "OOS trades": oos["trades"],
         "OOS WR": round(
             oos["wr"],
             2,
@@ -2602,7 +2119,7 @@ def strategy_discovery(
         ),
         "Expectancy": round(
             oos["expectancy"],
-            4,
+            3,
         ),
         "Sharpe": round(
             oos["sharpe"],
@@ -2612,73 +2129,53 @@ def strategy_discovery(
             oos["sortino"],
             2,
         ),
-        "Max loss streak": oos[
-            "max_loss_streak"
-        ],
+        "Max loss streak": (
+            oos["max_loss_streak"]
+        ),
         "Opposite PF": round(
             opposite_oos["pf"],
             3,
         ),
         "MC P05 %": (
             round(
-                monte_carlo[
-                    "p05_return"
-                ],
+                monte_carlo["p05_return"],
                 2,
             )
             if np.isfinite(
-                monte_carlo[
-                    "p05_return"
-                ]
+                monte_carlo["p05_return"]
             )
             else np.nan
         ),
         "MC median %": (
             round(
-                monte_carlo[
-                    "median_return"
-                ],
+                monte_carlo["median_return"],
                 2,
             )
             if np.isfinite(
-                monte_carlo[
-                    "median_return"
-                ]
+                monte_carlo["median_return"]
             )
             else np.nan
         ),
         "MC P95 DD": (
             round(
-                monte_carlo[
-                    "p95_dd"
-                ],
+                monte_carlo["p95_dd"],
                 2,
             )
             if np.isfinite(
-                monte_carlo[
-                    "p95_dd"
-                ]
+                monte_carlo["p95_dd"]
             )
             else np.nan
         ),
         "Reason": reason,
-        "SL ATR": params[
-            "sl_atr"
-        ],
-        "RR": params[
-            "rr"
-        ],
-        "threshold": params[
-            "threshold"
-        ],
-        "max bars": params[
-            "max_bars"
-        ],
+        "SL ATR": params["sl_atr"],
+        "RR": params["rr"],
+        "threshold": params["threshold"],
+        "max bars": params["max_bars"],
     }
 
 
 # ============================================================
-# OPTIMIZER
+# Optimizer wrapper
 # ============================================================
 
 def optimize_coin(
@@ -2690,7 +2187,6 @@ def optimize_coin(
     fee,
     slip,
 ):
-
     result = strategy_discovery(
         symbol,
         days,
@@ -2702,15 +2198,15 @@ def optimize_coin(
     )
 
     status = result.get(
-        "Status"
+        "Status",
+        "ERROR",
     )
 
     if status in {
+        "ERROR",
         "NO DATA",
         "NO EDGE",
-        "ERROR",
     }:
-
         return {
             "Coin": symbol,
             "Status": "AFGEKEURD",
@@ -2732,61 +2228,61 @@ def optimize_coin(
             0,
         ),
         "Strategy": result.get(
-            "Strategy"
+            "Strategy",
         ),
         "Direction": result.get(
-            "Direction"
+            "Direction",
         ),
         "Stability": result.get(
-            "Stability"
+            "Stability",
         ),
         "WF consistency": result.get(
-            "WF"
+            "WF",
         ),
         "OOS PF": result.get(
-            "OOS PF"
+            "OOS PF",
         ),
         "OOS %": result.get(
-            "OOS %"
+            "OOS %",
         ),
         "OOS trades": result.get(
-            "OOS trades"
+            "OOS trades",
         ),
         "OOS WR": result.get(
-            "OOS WR"
+            "OOS WR",
         ),
         "OOS DD": result.get(
-            "OOS DD"
+            "OOS DD",
         ),
         "Expectancy": result.get(
-            "Expectancy"
+            "Expectancy",
         ),
         "Sharpe": result.get(
-            "Sharpe"
+            "Sharpe",
         ),
         "Sortino": result.get(
-            "Sortino"
+            "Sortino",
         ),
         "Max loss streak": result.get(
-            "Max loss streak"
+            "Max loss streak",
         ),
         "MC P05 %": result.get(
-            "MC P05 %"
+            "MC P05 %",
         ),
         "Reason": result.get(
-            "Reason"
+            "Reason",
         ),
         "SL ATR": result.get(
-            "SL ATR"
+            "SL ATR",
         ),
         "RR": result.get(
-            "RR"
+            "RR",
         ),
         "threshold": result.get(
-            "threshold"
+            "threshold",
         ),
         "max bars": result.get(
-            "max bars"
+            "max bars",
         ),
     }
 
@@ -2801,21 +2297,16 @@ st.title(
 
 st.caption(
     "Trend • Breakout • Pullback • Mean-Reversion • "
-    "Momentum • LONG/SHORT • Walk-forward • "
-    "Monte Carlo • Stability • OOS"
+    "Momentum • LONG/SHORT • Walk-forward • OOS • "
+    "Monte Carlo • Stability"
 )
 
 
-# ============================================================
-# SIDEBAR
-# ============================================================
-
 with st.sidebar:
-
-    st.header("⚙️ Instellingen")
+    st.header("⚙️ Onderzoek")
 
     mode = st.radio(
-        "Strategie-modus",
+        "Strategiemodus",
         [
             "Conservatief",
             "Agressief",
@@ -2868,17 +2359,12 @@ with st.sidebar:
     st.divider()
 
     st.caption(
-        f"Engine: v{APP_VERSION}"
+        "TRADE = strengste onderzoeksfilter."
     )
-
     st.caption(
-        f"{len(STRATEGIES)} strategie-varianten"
+        "Dit programma plaatst geen echte orders."
     )
 
-
-# ============================================================
-# CONFIG
-# ============================================================
 
 current_config = make_config(
     days,
@@ -2894,33 +2380,26 @@ store = load_store()
 if store["config"] != current_config:
     active_results = {}
 else:
-    active_results = store[
-        "results"
-    ]
+    active_results = store["results"]
 
-
-# ============================================================
-# TABS
-# ============================================================
 
 tab1, tab2, tab3, tab4 = st.tabs(
     [
         "🔬 Optimizer",
         "🧠 Strategy Discovery",
         "🏆 Robustness",
-        "📈 Scanner",
+        "📈 Live scanner",
     ]
 )
 
 
 # ============================================================
-# TAB 1 — OPTIMIZER
+# Optimizer
 # ============================================================
 
 with tab1:
-
     st.subheader(
-        "🔬 Robustness Optimizer"
+        "🔬 Robuuste optimizer"
     )
 
     done = sum(
@@ -2939,34 +2418,27 @@ with tab1:
     col1, col2 = st.columns(2)
 
     with col1:
-
-        start = st.button(
+        start_optimizer = st.button(
             "🚀 Start / hervat optimizer",
             type="primary",
-            use_container_width=True,
         )
 
     with col2:
-
-        reset = st.button(
+        reset_optimizer = st.button(
             "🧹 Nieuwe optimalisatie",
-            use_container_width=True,
         )
 
-    if reset:
-
-        store = {
+    if reset_optimizer:
+        new_store = {
             "config": current_config,
             "results": {},
         }
 
-        save_store(store)
-
+        save_store(new_store)
         st.rerun()
 
-    if start:
-
-        store = {
+    if start_optimizer:
+        working_store = {
             "config": current_config,
             "results": active_results,
         }
@@ -2977,36 +2449,28 @@ with tab1:
 
         status_box = st.empty()
 
-        for i, symbol in enumerate(
-            COINS
-        ):
-
-            if symbol in store[
-                "results"
-            ]:
-
+        for index, symbol in enumerate(COINS):
+            if symbol in working_store["results"]:
                 status_box.write(
                     f"✅ {symbol} al klaar — overslaan"
                 )
 
                 progress.progress(
-                    (i + 1)
+                    (index + 1)
                     / len(COINS)
                 )
 
                 continue
 
             status_box.write(
-                f"⚙️ {symbol}: "
-                f"strategy discovery + "
-                f"robustness ({i + 1}/{len(COINS)})..."
+                f"⚙️ {symbol}: analyse "
+                f"({index + 1}/{len(COINS)})..."
             )
 
             started = time.time()
 
             try:
-
-                result = optimize_coin(
+                row = optimize_coin(
                     symbol,
                     days,
                     mode,
@@ -3016,61 +2480,61 @@ with tab1:
                     slip,
                 )
 
-                store["results"][
+                working_store["results"][
                     symbol
                 ] = {
-                    "row": result,
+                    "row": row,
                     "saved_at": (
                         pd.Timestamp.utcnow()
                         .isoformat()
                     ),
                 }
 
-                # Save after every coin.
-                save_store(store)
+                save_store(
+                    working_store
+                )
 
                 elapsed = (
-                    time.time()
-                    - started
+                    time.time() - started
                 )
 
                 status_box.write(
-                    f"✅ {symbol} klaar "
-                    f"in {elapsed:.1f}s — "
-                    f"opgeslagen"
+                    f"✅ {symbol} klaar in "
+                    f"{elapsed:.1f}s — opgeslagen"
                 )
 
             except Exception as exc:
-
-                result = {
+                row = {
                     "Coin": symbol,
                     "Status": "FOUT",
                     "Reason": str(exc),
                 }
 
-                store["results"][
+                working_store["results"][
                     symbol
                 ] = {
-                    "row": result,
+                    "row": row,
                     "saved_at": (
                         pd.Timestamp.utcnow()
                         .isoformat()
                     ),
                 }
 
-                save_store(store)
+                save_store(
+                    working_store
+                )
 
                 status_box.error(
                     f"{symbol}: {exc}"
                 )
 
             progress.progress(
-                (i + 1)
+                (index + 1)
                 / len(COINS)
             )
 
         st.success(
-            "Robustness optimizer klaar."
+            "Optimizer klaar."
         )
 
         st.rerun()
@@ -3083,13 +2547,9 @@ with tab1:
     ]
 
     if rows:
-
-        table = pd.DataFrame(
-            rows
-        )
+        table = pd.DataFrame(rows)
 
         if "Robustness" in table.columns:
-
             table = table.sort_values(
                 "Robustness",
                 ascending=False,
@@ -3103,72 +2563,57 @@ with tab1:
         )
 
     else:
-
         st.info(
-            "Nog geen optimizer-resultaten. "
-            "Klik op 'Start / hervat optimizer'."
+            "Nog geen optimizerresultaten."
         )
 
 
 # ============================================================
-# TAB 2 — STRATEGY DISCOVERY
+# Strategy Discovery
 # ============================================================
 
 with tab2:
-
     st.subheader(
         "🧠 Strategy Discovery"
     )
 
     st.write(
-        "Hier worden meerdere strategie-families "
-        "en LONG/SHORT-richtingen onderzocht. "
-        "De laatste 20% van de data blijft volledig "
-        "onaangeraakt voor de finale OOS-test."
+        "Deze analyse onderzoekt meerdere "
+        "strategie-families per coin en richting. "
+        "De laatste 20% van de data blijft "
+        "onaangeroerde OOS-data."
     )
 
     st.info(
-        "TRADE vereist: ≥2/3 walk-forward, "
-        "≥15 OOS-trades, OOS PF ≥1.20, "
-        "positief OOS-rendement, DD > -20%, "
-        "Monte Carlo P05 > -10% en ≥60% stability."
+        "TRADE vereist: ≥2/3 WF, ≥15 OOS-trades, "
+        "OOS PF ≥1.20, positief OOS-rendement, "
+        "DD > -20%, MC P05 > -10% en "
+        "≥60% parameter-stability."
     )
 
     discovery_key = (
-        f"discovery_v841_"
-        f"{days}_"
-        f"{mode}_"
-        f"{capital}_"
-        f"{risk}_"
-        f"{fee}_"
-        f"{slip}"
+        "discovery_v841_"
+        f"{days}_{mode}_{capital}_{risk}_{fee}_{slip}"
     )
 
     start_discovery = st.button(
         "🧠 Start Strategy Discovery",
         type="primary",
-        use_container_width=True,
     )
 
     if start_discovery:
-
         discovery_rows = []
 
         progress = st.progress(0)
-
         message = st.empty()
 
-        for i, symbol in enumerate(
-            COINS
-        ):
-
+        for index, symbol in enumerate(COINS):
             message.write(
                 f"🔎 Analyse {symbol} "
-                f"({i + 1}/{len(COINS)})..."
+                f"({index + 1}/{len(COINS)})..."
             )
 
             try:
-
                 discovery_rows.append(
                     strategy_discovery(
                         symbol,
@@ -3182,7 +2627,6 @@ with tab2:
                 )
 
             except Exception as exc:
-
                 discovery_rows.append(
                     {
                         "Coin": symbol,
@@ -3192,7 +2636,7 @@ with tab2:
                 )
 
             progress.progress(
-                (i + 1)
+                (index + 1)
                 / len(COINS)
             )
 
@@ -3202,13 +2646,12 @@ with tab2:
             discovery_rows
         )
 
-    discovery = st.session_state.get(
+    discovery_table = st.session_state.get(
         discovery_key
     )
 
-    if discovery is not None:
-
-        display = discovery.copy()
+    if discovery_table is not None:
+        display = discovery_table.copy()
 
         status_order = {
             "TRADE": 0,
@@ -3220,38 +2663,31 @@ with tab2:
         }
 
         if "Status" in display.columns:
-
-            display["_status_order"] = (
+            display["_sort"] = (
                 display["Status"]
                 .map(status_order)
                 .fillna(9)
             )
 
-            sort_columns = [
-                "_status_order"
-            ]
-
-            ascending = [True]
-
-            if "Confidence" in display.columns:
-
-                sort_columns.append(
-                    "Confidence"
+            if "OOS PF" in display.columns:
+                display = display.sort_values(
+                    [
+                        "_sort",
+                        "OOS PF",
+                    ],
+                    ascending=[
+                        True,
+                        False,
+                    ],
                 )
 
-                ascending.append(False)
+            else:
+                display = display.sort_values(
+                    "_sort"
+                )
 
-            display = (
-                display
-                .sort_values(
-                    sort_columns,
-                    ascending=ascending,
-                )
-                .drop(
-                    columns=[
-                        "_status_order"
-                    ]
-                )
+            display = display.drop(
+                columns=["_sort"]
             )
 
         st.dataframe(
@@ -3260,54 +2696,49 @@ with tab2:
             hide_index=True,
         )
 
-        trade_count = int(
-            (
-                display["Status"]
-                == "TRADE"
-            ).sum()
-            if "Status" in display.columns
-            else 0
-        )
-
-        watch_count = int(
-            (
-                display["Status"]
-                == "WATCH"
-            ).sum()
-            if "Status" in display.columns
-            else 0
-        )
-
-        if trade_count:
-
-            st.success(
-                f"🟢 {trade_count} "
-                f"kandidaat/kandidaten "
-                f"halen de TRADE-drempel."
+        if "Status" in display.columns:
+            trade_count = int(
+                (
+                    display["Status"]
+                    == "TRADE"
+                ).sum()
             )
 
-        elif watch_count:
-
-            st.warning(
-                f"🟡 {watch_count} "
-                f"kandidaat/kandidaten "
-                f"zijn WATCH."
+            watch_count = int(
+                (
+                    display["Status"]
+                    == "WATCH"
+                ).sum()
             )
 
         else:
+            trade_count = 0
+            watch_count = 0
 
+        if trade_count:
+            st.success(
+                f"{trade_count} kandidaat/kandidaten "
+                "halen de TRADE-drempel."
+            )
+
+        elif watch_count:
+            st.warning(
+                f"{watch_count} kandidaat/kandidaten "
+                "zijn WATCH."
+            )
+
+        else:
             st.info(
-                "🔴 Geen robuuste edge gevonden. "
-                "Dat is een geldig onderzoeksresultaat."
+                "Geen robuuste edge gevonden. "
+                "Dat is een geldig resultaat."
             )
 
 
 # ============================================================
-# TAB 3 — ROBUSTNESS
+# Robustness
 # ============================================================
 
 with tab3:
-
     st.subheader(
         "🏆 Robuuste strategieën"
     )
@@ -3320,35 +2751,29 @@ with tab3:
     ]
 
     if rows:
-
-        data = pd.DataFrame(
-            rows
-        )
+        data = pd.DataFrame(rows)
 
         if "Status" in data.columns:
-
             robust = data[
-                data["Status"]
-                == "ROBUST"
+                data["Status"] == "ROBUST"
             ].copy()
-
         else:
-
             robust = pd.DataFrame()
 
+        if (
+            len(robust)
+            and "Robustness" in robust.columns
+        ):
+            robust = robust.sort_values(
+                "Robustness",
+                ascending=False,
+                na_position="last",
+            )
+
         if len(robust):
-
-            if "Robustness" in robust.columns:
-
-                robust = robust.sort_values(
-                    "Robustness",
-                    ascending=False,
-                    na_position="last",
-                )
-
             st.success(
-                f"🟢 {len(robust)} coin(s) "
-                f"hebben een robuuste kandidaat."
+                f"{len(robust)} coin(s) "
+                "hebben een robuuste kandidaat."
             )
 
             st.dataframe(
@@ -3358,60 +2783,52 @@ with tab3:
             )
 
         else:
-
             st.warning(
-                "Geen robuuste strategie gevonden."
+                "Geen robuuste strategie gevonden. "
+                "De optimizer forceert geen winnaar."
             )
 
         st.info(
-            "De optimizer forceert bewust geen winnaar. "
-            "Een strategie moet meerdere onafhankelijke "
-            "filters doorstaan."
+            "Een kandidaat moet meerdere "
+            "walk-forward periodes doorstaan "
+            "en voldoende sterke finale OOS-data hebben."
         )
 
     else:
-
         st.info(
             "Voer eerst de optimizer uit."
         )
 
 
 # ============================================================
-# TAB 4 — SCANNER
+# Live scanner
 # ============================================================
 
 with tab4:
-
     st.subheader(
-        "📈 Research Scanner"
+        "📈 Live scanner"
     )
 
     st.write(
-        "De scanner gebruikt de gevonden strategie "
-        "en controleert de actuele marktsituatie. "
-        "Dit plaatst geen orders."
+        "Dit is alleen een onderzoeksscanner. "
+        "Er worden geen echte orders geplaatst."
     )
 
-    selected = st.multiselect(
+    selected_coins = st.multiselect(
         "Coins",
         COINS,
         default=COINS[:5],
     )
 
     scan_button = st.button(
-        "🔎 Scan nu",
-        type="primary",
-        use_container_width=True,
+        "🔎 Scan nu"
     )
 
     if scan_button:
-
         scan_rows = []
 
-        for symbol in selected:
-
+        for symbol in selected_coins:
             try:
-
                 saved = (
                     active_results
                     .get(symbol, {})
@@ -3425,65 +2842,44 @@ with tab4:
                     )
                 ).lower()
 
-                direction = saved.get(
-                    "Direction"
-                )
-
                 params = {
                     "family": family,
-
                     "rsi_min": 52,
                     "rsi_max": 68,
-
                     "adx_min": 18,
                     "adx_htf": 18,
-
-                    "volume_min": 1.0,
-
-                    "vol_min": 0.55,
-                    "vol_max": 2.8,
-
+                    "vol_min": 1.0,
+                    "vol_regime_min": 0.55,
+                    "vol_regime_max": 2.8,
                     "slope_min": 0.02,
-
                     "sl_atr": float(
                         saved.get(
                             "SL ATR",
                             1.5,
                         )
                     ),
-
                     "rr": float(
                         saved.get(
                             "RR",
                             2.0,
                         )
                     ),
-
                     "threshold": int(
                         saved.get(
                             "threshold",
                             70,
                         )
                     ),
-
                     "min_edge": 5,
-
-                    "max_bars": int(
-                        saved.get(
-                            "max bars",
-                            48,
-                        )
-                    ),
-
+                    "max_bars": 48,
                     "min_stop_pct": 0.35,
-
                     "trail_atr": 1.0,
                     "trail_trigger_r": 1.0,
                 }
 
                 data = build_mtf(
                     symbol,
-                    1500,
+                    1000,
                 )
 
                 long_scores, short_scores = (
@@ -3495,36 +2891,30 @@ with tab4:
 
                 latest = data.iloc[-1]
 
-                long_score = int(
+                long_value = int(
                     long_scores[-1]
                 )
 
-                short_score = int(
+                short_value = int(
                     short_scores[-1]
                 )
 
                 raw_signal = "WAIT"
 
                 if (
-                    long_score
+                    long_value
                     >= params["threshold"]
-                    and
-                    long_score
-                    > short_score
-                    + params["min_edge"]
+                    and long_value
+                    > short_value + params["min_edge"]
                 ):
-
                     raw_signal = "LONG"
 
                 elif (
-                    short_score
+                    short_value
                     >= params["threshold"]
-                    and
-                    short_score
-                    > long_score
-                    + params["min_edge"]
+                    and short_value
+                    > long_value + params["min_edge"]
                 ):
-
                     raw_signal = "SHORT"
 
                 allowed = saved.get(
@@ -3532,22 +2922,24 @@ with tab4:
                 ) in {
                     "TRADE",
                     "WATCH",
+                    "ROBUST",
                 }
+
+                saved_direction = saved.get(
+                    "Direction"
+                )
 
                 if (
                     allowed
                     and raw_signal != "WAIT"
                     and (
-                        not direction
-                        or direction
+                        not saved_direction
+                        or saved_direction
                         == raw_signal
                     )
                 ):
-
                     signal = raw_signal
-
                 else:
-
                     signal = "WAIT"
 
                 scan_rows.append(
@@ -3555,45 +2947,29 @@ with tab4:
                         "Coin": symbol,
                         "Signal": signal,
                         "Strategy": family.upper(),
-                        "Direction": (
-                            direction
-                            or "-"
-                        ),
-                        "Long score": long_score,
-                        "Short score": short_score,
+                        "Long": long_value,
+                        "Short": short_value,
                         "ADX": round(
                             float(
-                                latest["adx"]
+                                latest.adx
                             ),
                             1,
                         ),
                         "RSI": round(
                             float(
-                                latest["rsi"]
+                                latest.rsi
                             ),
                             1,
                         ),
                         "Vol ratio": round(
                             float(
-                                latest[
-                                    "volume_ratio"
-                                ]
-                            ),
-                            2,
-                        ),
-                        "ATR %": round(
-                            float(
-                                latest[
-                                    "atr_pct"
-                                ]
+                                latest.vol_ratio
                             ),
                             2,
                         ),
                         "Price": round(
                             float(
-                                latest[
-                                    "close"
-                                ]
+                                latest.close
                             ),
                             6,
                         ),
@@ -3601,44 +2977,32 @@ with tab4:
                 )
 
             except Exception as exc:
-
                 scan_rows.append(
                     {
                         "Coin": symbol,
                         "Signal": "ERROR",
                         "Strategy": "-",
-                        "Direction": "-",
-                        "Long score": 0,
-                        "Short score": 0,
+                        "Long": 0,
+                        "Short": 0,
                         "Error": str(exc),
                     }
                 )
 
-        scan_table = pd.DataFrame(
-            scan_rows
-        )
-
         st.dataframe(
-            scan_table,
+            pd.DataFrame(scan_rows),
             use_container_width=True,
             hide_index=True,
         )
 
 
 # ============================================================
-# FOOTER
+# Footer
 # ============================================================
 
 st.divider()
 
 st.warning(
-    "⚠️ Onderzoekstool. Geen financieel advies "
-    "en geen live orders. Een positieve backtest "
+    "Onderzoekstool. Geen financieel advies en "
+    "geen live orders. Een positieve backtest "
     "is geen garantie voor toekomstige resultaten."
-)
-
-st.caption(
-    f"Crypto DayTrader v{APP_VERSION} • "
-    f"{len(STRATEGIES)} strategy variants • "
-    "Research only"
 )
