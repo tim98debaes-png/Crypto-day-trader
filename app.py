@@ -212,7 +212,7 @@ PARAMS=[]
 for fast,slow,trend,rsi_n,stop,rr,thr in product(
     [9,20],[21,50],[50,200],[14],[1.0,1.25,1.5],[1.5,2.0,2.5],[65,70,75]):
     if fast>=slow:continue
-    PARAMS.append({"fast":fast,"slow":slow,"trend":trend,"rsi":rsi_n,"rsi_long_low":50,"rsi_long_high":68,
+    PARAMS.append({"fast":fast,"slow":slow,"trend":trend,"rsi":rsi_n,"atr":14,"rsi_long_low":50,"rsi_long_high":68,
                    "rsi_short_low":32,"rsi_short_high":50,"vol_mult":1.15,"atr_min":.15,"atr_max":4,
                    "atr_stop":stop,"rr":rr,"threshold":thr})
 
