@@ -1,21 +1,24 @@
-
-import time
-from datetime import datetime, timezone
 import requests
 import numpy as np
 import pandas as pd
 import streamlit as st
 
+st.set_page_config(page_title="Crypto DayTrader v3", page_icon="₿", layout="wide")
+
 BINANCE_URL = "https://data-api.binance.vision/api/v3/klines"
+TIMEFRAMES = {"1m":"1m","3m":"3m","5m":"5m","15m":"15m","30m":"30m","1h":"1h"}
 
-st.set_page_config(page_title="Crypto DayTrader", page_icon="₿", layout="wide")
-
-@st.cache_data(ttl=15)
-def get_klines(symbol="BTCUSDT", interval="5m", limit=500):
-    params = {"symbol": symbol.upper(), "interval": interval, "limit": limit}
-    r = requests.get(BINANCE_URL, params=params, timeout=10)
+@st.cache_data(ttl=20)
+def get_klines(symbol, interval, limit=300):
+    r = requests.get(
+        BINANCE_URL,
+        params={"symbol": symbol, "interval": interval, "limit": limit},
+        timeout=15,
+    )
     r.raise_for_status()
     data = r.json()
+    if not isinstance(data, list) or not data:
+        raise ValueError("Geen marktdata beschikbaar.")
     cols = ["open_time","open","high","low","close","volume","close_time",
             "quote_volume","trades","taker_buy_base","taker_buy_quote","ignore"]
     df = pd.DataFrame(data, columns=cols)
@@ -24,13 +27,13 @@ def get_klines(symbol="BTCUSDT", interval="5m", limit=500):
     df["time"] = pd.to_datetime(df["open_time"], unit="ms", utc=True)
     return df[["time","open","high","low","close","volume"]].dropna()
 
-def rsi(series, period=14):
-    delta = series.diff()
-    gain = delta.clip(lower=0)
-    loss = -delta.clip(upper=0)
-    avg_gain = gain.ewm(alpha=1/period, adjust=False).mean()
-    avg_loss = loss.ewm(alpha=1/period, adjust=False).mean()
-    rs = avg_gain / avg_loss.replace(0, np.nan)
+def rsi(s, n=14):
+    d = s.diff()
+    gain = d.clip(lower=0)
+    loss = -d.clip(upper=0)
+    ag = gain.ewm(alpha=1/n, adjust=False).mean()
+    al = loss.ewm(alpha=1/n, adjust=False).mean()
+    rs = ag / al.replace(0, np.nan)
     return 100 - (100 / (1 + rs))
 
 def indicators(df):
@@ -38,155 +41,122 @@ def indicators(df):
     x["ema9"] = x.close.ewm(span=9, adjust=False).mean()
     x["ema21"] = x.close.ewm(span=21, adjust=False).mean()
     x["ema50"] = x.close.ewm(span=50, adjust=False).mean()
-    x["rsi"] = rsi(x.close, 14)
-    ema12 = x.close.ewm(span=12, adjust=False).mean()
-    ema26 = x.close.ewm(span=26, adjust=False).mean()
-    x["macd"] = ema12 - ema26
+    x["rsi"] = rsi(x.close)
+    e12 = x.close.ewm(span=12, adjust=False).mean()
+    e26 = x.close.ewm(span=26, adjust=False).mean()
+    x["macd"] = e12 - e26
     x["macd_signal"] = x.macd.ewm(span=9, adjust=False).mean()
     x["vol_ma"] = x.volume.rolling(20).mean()
+    tr = pd.concat([
+        x.high-x.low,
+        (x.high-x.close.shift()).abs(),
+        (x.low-x.close.shift()).abs()
+    ], axis=1).max(axis=1)
+    x["atr"] = tr.rolling(14).mean()
     return x
 
-def signal(row):
+def analyse(row, mode):
     score = 0
     reasons = []
     if row.ema9 > row.ema21:
-        score += 1; reasons.append("EMA9 > EMA21")
-    else:
-        score -= 1; reasons.append("EMA9 < EMA21")
+        score += 2; reasons.append("EMA trend bullish")
     if row.close > row.ema50:
-        score += 1; reasons.append("prijs boven EMA50")
-    else:
-        score -= 1; reasons.append("prijs onder EMA50")
+        score += 2; reasons.append("boven EMA50")
     if row.macd > row.macd_signal:
-        score += 1; reasons.append("MACD bullish")
-    else:
-        score -= 1; reasons.append("MACD bearish")
-    if 50 <= row.rsi <= 70:
-        score += 1; reasons.append("RSI gunstig")
+        score += 2; reasons.append("MACD bullish")
+    if 45 <= row.rsi <= 68:
+        score += 2; reasons.append("RSI gunstig")
     elif row.rsi < 35:
         score += 1; reasons.append("RSI oversold")
-    elif row.rsi > 75:
-        score -= 1; reasons.append("RSI overbought")
     if pd.notna(row.vol_ma) and row.volume > row.vol_ma:
-        score += 1; reasons.append("volume boven gemiddelde")
-    return score, reasons
+        score += 1; reasons.append("volume sterk")
 
-def backtest(df, risk_pct=1.0, stop_pct=0.7, target_pct=1.4, fee_pct=0.1):
-    x = indicators(df).dropna().reset_index(drop=True)
-    cash = 1000.0
-    equity_curve = []
-    trades = []
-    in_pos = False
-    entry = stop = target = qty = 0.0
-    entry_time = None
+    threshold = 7 if mode == "Conservatief" else 5
+    signal = "🟢 LONG" if score >= threshold else "🟡 WACHTEN"
+    return score, signal, reasons
 
-    for i in range(len(x)):
-        row = x.iloc[i]
-        price = row.close
-        if not in_pos:
-            s, _ = signal(row)
-            if s >= 4:
-                risk_cash = cash * (risk_pct / 100)
-                risk_per_unit = price * (stop_pct / 100)
-                qty = risk_cash / risk_per_unit if risk_per_unit > 0 else 0
-                entry = price * (1 + fee_pct/100)
-                stop = entry * (1 - stop_pct/100)
-                target = entry * (1 + target_pct/100)
-                entry_time = row.time
-                in_pos = True
-        else:
-            exit_price = None
-            reason = None
-            if row.low <= stop:
-                exit_price, reason = stop, "stop-loss"
-            elif row.high >= target:
-                exit_price, reason = target, "take-profit"
-            if exit_price is not None:
-                exit_net = exit_price * (1 - fee_pct/100)
-                pnl = (exit_net - entry) * qty
-                cash += pnl
-                trades.append({
-                    "entry": entry_time, "exit": row.time, "entry_price": entry,
-                    "exit_price": exit_price, "pnl": pnl, "reason": reason
-                })
-                in_pos = False
-        equity_curve.append(cash)
-
-    if in_pos:
-        pnl = (x.iloc[-1].close * (1-fee_pct/100) - entry) * qty
-        cash += pnl
-
-    t = pd.DataFrame(trades)
-    wins = int((t.pnl > 0).sum()) if len(t) else 0
-    losses = int((t.pnl <= 0).sum()) if len(t) else 0
-    winrate = wins / len(t) * 100 if len(t) else 0
-    return cash, t, winrate, equity_curve
-
-st.title("₿ Crypto DayTrader v2")
-st.caption("Mobiel dashboard • paper trading • signalen zijn geen financieel advies.")
+st.title("₿ Crypto DayTrader v3")
+st.caption("Mobiele scanner • paper trading • signalen zijn geen financieel advies.")
 
 with st.sidebar:
     st.header("Instellingen")
-    symbol = st.text_input("Crypto", "BTCUSDT").upper().replace("/", "")
-    interval = st.selectbox("Timeframe", ["1m","3m","5m","15m","30m","1h"], index=2)
-    risk_pct = st.slider("Risico per trade (%)", 0.25, 3.0, 1.0, 0.25)
-    stop_pct = st.slider("Stop-loss (%)", 0.2, 3.0, 0.7, 0.1)
-    target_pct = st.slider("Take-profit (%)", 0.3, 6.0, 1.4, 0.1)
-    capital = st.number_input("Startkapitaal backtest (€)", 100.0, 100000.0, 1000.0, 100.0)
-    refresh = st.button("🔄 Vernieuwen")
+    mode = st.radio("Strategie", ["Conservatief", "Agressief"])
+    interval = st.selectbox("Timeframe", list(TIMEFRAMES), index=2)
+    capital = st.number_input("Kapitaal (€)", 100.0, 100000.0, 1000.0, 100.0)
+    risk = st.slider("Risico per trade (%)", 0.25, 3.0, 1.0, 0.25)
+    symbols_text = st.text_area(
+        "Coins scannen",
+        "BTCUSDT\nETHUSDT\nSOLUSDT\nXRPUSDT\nDOGEUSDT\nADAUSDT\nAVAXUSDT\nLINKUSDT\nLTCUSDT\nDOTUSDT"
+    )
+    if st.button("🔄 Nieuwe scan"):
+        st.cache_data.clear()
+        st.rerun()
 
-try:
-    df = get_klines(symbol, interval, 500)
-    x = indicators(df)
-    last = x.iloc[-1]
-    score, reasons = signal(last)
+symbols = [s.strip().upper().replace("/", "") for s in symbols_text.splitlines() if s.strip()]
+results = []
 
-    c1,c2,c3,c4 = st.columns(4)
-    c1.metric("Prijs", f"${last.close:,.2f}")
-    c2.metric("RSI", f"{last.rsi:.1f}")
-    c3.metric("Signaalscore", f"{score}/5")
-    direction = "🟢 LONG" if score >= 4 else ("🔴 GEEN LONG" if score <= 1 else "🟡 WACHTEN")
-    c4.metric("Signaal", direction)
+with st.spinner("Crypto's worden gescand..."):
+    for symbol in symbols:
+        try:
+            df = indicators(get_klines(symbol, interval))
+            row = df.iloc[-1]
+            score, signal, reasons = analyse(row, mode)
+            results.append({
+                "Coin": symbol,
+                "Prijs": row.close,
+                "Score": score,
+                "Signaal": signal,
+                "RSI": row.rsi,
+                "Reden": " • ".join(reasons) if reasons else "Geen sterke bevestiging"
+            })
+        except Exception as e:
+            results.append({
+                "Coin": symbol, "Prijs": np.nan, "Score": 0,
+                "Signaal": "⚠️ FOUT", "RSI": np.nan, "Reden": str(e)
+            })
 
-    st.subheader("Markt")
-    chart = x.set_index("time")[["close","ema9","ema21","ema50"]]
-    st.line_chart(chart)
+res = pd.DataFrame(results).sort_values(["Score","Coin"], ascending=[False, True])
 
-    st.subheader("Waarom dit signaal?")
-    st.write(" · ".join(reasons))
+st.subheader(f"🔎 Markt Scanner — {mode}")
+st.dataframe(
+    res[["Coin","Prijs","Score","Signaal","RSI","Reden"]],
+    hide_index=True,
+    use_container_width=True
+)
 
-    if score >= 4:
+valid = res[res["Signaal"] != "⚠️ FOUT"]
+if len(valid):
+    best = valid.iloc[0]
+    st.subheader("🏆 Beste kans")
+    a,b,c,d = st.columns(4)
+    a.metric("Coin", best.Coin)
+    b.metric("Score", f"{int(best.Score)}/9")
+    c.metric("Signaal", best.Signaal)
+    d.metric("RSI", f"{best.RSI:.1f}")
+
+    try:
+        best_df = indicators(get_klines(best.Coin, interval))
+        last = best_df.iloc[-1]
+        stop_dist = max(last.atr * 1.2, last.close * 0.004)
         entry = last.close
-        stop = entry * (1-stop_pct/100)
-        target = entry * (1+target_pct/100)
-        risk_cash = capital * risk_pct/100
-        qty = risk_cash / (entry-stop)
+        stop = entry - stop_dist
+        rr = 2.0 if mode == "Conservatief" else 1.6
+        target = entry + stop_dist * rr
+        risk_cash = capital * risk / 100
+        qty = risk_cash / (entry - stop) if entry > stop else 0
+
+        st.subheader("🎯 Trade-plan")
         a,b,c,d = st.columns(4)
         a.metric("Entry", f"${entry:,.2f}")
         b.metric("Stop-loss", f"${stop:,.2f}")
         c.metric("Take-profit", f"${target:,.2f}")
-        d.metric("Positie", f"{qty:.6f} {symbol[:-4]}")
-    else:
-        st.info("Geen sterke long-entry. Het systeem wacht liever dan een zwak signaal te forceren.")
+        d.metric("Positie", f"{qty:.6f}")
+        st.caption(f"Risico: €{risk_cash:.2f} • Risk/Reward: 1:{rr}")
 
-    st.subheader("Backtest laatste 500 candles")
-    final_capital, trades, winrate, equity = backtest(
-        df, risk_pct=risk_pct, stop_pct=stop_pct, target_pct=target_pct
-    )
-    # Scale the fixed €1000 backtest result to selected capital.
-    scaled = capital * final_capital / 1000
-    profit = scaled - capital
-    a,b,c,d = st.columns(4)
-    a.metric("Eindkapitaal", f"€{scaled:,.2f}")
-    a.metric("Resultaat", f"€{profit:,.2f}")
-    a.metric("Trades", len(trades))
-    a.metric("Winrate", f"{winrate:.1f}%")
-    if trades.empty:
-        st.warning("Geen trades in deze testperiode met deze instellingen.")
-    else:
-        st.dataframe(trades.tail(20), use_container_width=True)
+        st.subheader(f"📈 {best.Coin}")
+        st.line_chart(best_df.set_index("time")[["close","ema9","ema21","ema50"]])
+    except Exception as e:
+        st.error(f"Trade-plan kon niet worden berekend: {e}")
 
-    st.caption(f"Laatst bijgewerkt: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}")
-except Exception as e:
-    st.error(f"Koersdata kon niet worden opgehaald: {e}")
-    st.info("Controleer je internetverbinding en of het symbool bestaat, bijvoorbeeld BTCUSDT, ETHUSDT of SOLUSDT.")
+st.divider()
+st.caption("Paper trading only. Geen echte orders. Backtests en signalen zijn geen garantie voor toekomstige resultaten.")
