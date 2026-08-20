@@ -9,7 +9,7 @@ import requests
 import streamlit as st
 
 # ============================================================
-# Crypto DayTrader v8.3
+# Crypto DayTrader v8.3.1
 # Robust strategy research engine
 # - Fast vectorized indicators
 # - Long/short independently evaluated
@@ -22,13 +22,13 @@ import streamlit as st
 # - No live orders
 # ============================================================
 
-APP_VERSION = "8.3.0"
+APP_VERSION = "8.3.1"
 BINANCE = "https://data-api.binance.vision/api/v3/klines"
 COINS = [
     "BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "DOGEUSDT",
     "ADAUSDT", "AVAXUSDT", "LINKUSDT", "LTCUSDT", "DOTUSDT",
 ]
-RESULTS_FILE = "optimizer_results_v82.json"
+RESULTS_FILE = "optimizer_results_v831.json"
 
 st.set_page_config(
     page_title=f"Crypto DayTrader v{APP_VERSION}",
@@ -481,7 +481,9 @@ def backtest(df, p, mode, capital, risk, fee, slip):
 # Direction-aware research
 # -----------------------------
 
-def backtest_direction(df, p, mode, capital, risk, fee, slip, direction):
+def backtest_direction(
+    df, p, mode, capital, risk, fee, slip, direction, return_pnls=False
+):
     close = df.close.to_numpy(float)
     high = df.high.to_numpy(float)
     low = df.low.to_numpy(float)
@@ -535,8 +537,9 @@ def backtest_direction(df, p, mode, capital, risk, fee, slip, direction):
                     gross = (entry - ex) * qty
 
                 fees = (entry * qty + ex * qty) * fee / 100
-                cash += gross - fees
-                pnls.append(gross - fees)
+                pnl = gross - fees
+                cash += pnl
+                pnls.append(float(pnl))
                 position = 0
 
         if position == 0 and signal[i] and cash > 0:
@@ -561,22 +564,112 @@ def backtest_direction(df, p, mode, capital, risk, fee, slip, direction):
 
         equity[i] = cash
 
-    p = np.asarray(pnls, dtype=float)
-    wins = p[p > 0].sum() if len(p) else 0
-    losses = abs(p[p < 0].sum()) if len(p) else 0
+    pnls = np.asarray(pnls, dtype=float)
+    wins = pnls[pnls > 0].sum() if len(pnls) else 0
+    losses = abs(pnls[pnls < 0].sum()) if len(pnls) else 0
     pf = wins / losses if losses else (np.inf if wins else 0)
-    wr = (p > 0).mean() * 100 if len(p) else 0
-    dd = np.min(
-        equity / np.maximum.accumulate(equity) - 1
-    ) * 100 if len(equity) else 0
+    wr = (pnls > 0).mean() * 100 if len(pnls) else 0
+    dd = (
+        np.min(equity / np.maximum.accumulate(equity) - 1) * 100
+        if len(equity) else 0
+    )
 
-    return {
+    result = {
         "return": (cash / capital - 1) * 100,
         "pf": float(pf),
         "wr": float(wr),
         "dd": float(dd),
-        "trades": int(len(p)),
+        "trades": int(len(pnls)),
     }
+    if return_pnls:
+        result["pnls"] = pnls
+    return result
+
+
+def monte_carlo_stats(pnls, capital=1000.0, simulations=1000, seed=42):
+    """Bootstrap the actual individual trade P&Ls."""
+    p = np.asarray(pnls, dtype=float)
+    if len(p) < 15:
+        return {
+            "median_return": np.nan,
+            "p05_return": np.nan,
+            "p95_return": np.nan,
+            "median_dd": np.nan,
+            "p95_dd": np.nan,
+        }
+
+    rng = np.random.default_rng(seed)
+    returns = np.empty(simulations)
+    dds = np.empty(simulations)
+
+    for j in range(simulations):
+        sample = rng.choice(p, size=len(p), replace=True)
+        eq = capital + np.cumsum(sample)
+        curve = np.r_[capital, eq]
+        peak = np.maximum.accumulate(curve)
+        dds[j] = np.min((curve / peak - 1) * 100)
+        returns[j] = (eq[-1] / capital - 1) * 100
+
+    return {
+        "median_return": float(np.median(returns)),
+        "p05_return": float(np.percentile(returns, 5)),
+        "p95_return": float(np.percentile(returns, 95)),
+        "median_dd": float(np.median(dds)),
+        "p95_dd": float(np.percentile(dds, 95)),
+    }
+
+
+def candidate_status(folds, oos, mc):
+    wf_good = sum(
+        x["return"] > 0 and x["pf"] >= 1.05
+        for x in folds
+    )
+
+    hard_oos = (
+        oos["trades"] >= 15
+        and oos["return"] > 0
+        and oos["pf"] >= 1.20
+        and oos["dd"] > -20
+    )
+    mc_ok = np.isfinite(mc["p05_return"]) and mc["p05_return"] > -10
+
+    confidence = (
+        min(wf_good / 3, 1) * 25
+        + min(max(oos["pf"] - 1, 0) / 1, 1) * 30
+        + min(max(oos["return"], 0) / 20, 1) * 20
+        + min(max(oos["dd"] + 20, 0) / 20, 1) * 10
+        + (min(max(mc["p05_return"], 0) / 10, 1) * 15 if mc_ok else 0)
+    )
+    confidence = round(float(confidence), 1)
+
+    if wf_good >= 2 and hard_oos and mc_ok:
+        status = "TRADE"
+    elif (
+        oos["return"] > 0
+        and oos["pf"] >= 1.05
+        and oos["trades"] >= 10
+    ):
+        status = "WATCH"
+    else:
+        status = "NO TRADE"
+
+    reasons = []
+    if wf_good < 2:
+        reasons.append(f"WF {wf_good}/3")
+    if oos["trades"] < 15:
+        reasons.append(f"OOS trades {oos['trades']} < 15")
+    if oos["pf"] < 1.20:
+        reasons.append(f"OOS PF {oos['pf']:.2f} < 1.20")
+    if oos["return"] <= 0:
+        reasons.append("OOS rendement <= 0")
+    if oos["dd"] <= -20:
+        reasons.append(f"OOS DD {oos['dd']:.1f}%")
+    if not mc_ok:
+        reasons.append("MC P05 < -10%")
+
+    return status, confidence, (
+        "; ".join(reasons) if reasons else "Alle hoofdcriteria gehaald"
+    )
 
 
 def monte_carlo_stats(pnls, simulations=500, seed=42):
@@ -617,7 +710,6 @@ def strategy_discovery(symbol, days, mode, capital, risk, fee, slip):
     n = len(d)
     final_cut = int(n * .80)
     final_oos = d.iloc[final_cut:].reset_index(drop=True)
-
     candidates = []
 
     for p in STRATEGIES:
@@ -639,10 +731,9 @@ def strategy_discovery(symbol, days, mode, capital, risk, fee, slip):
             if len(folds) != 3:
                 continue
 
-            consistency = sum(
-                x["return"] > 0 and x["pf"] >= 1.0 for x in folds
+            wf_good = sum(
+                x["return"] > 0 and x["pf"] >= 1.05 for x in folds
             )
-            trades = sum(x["trades"] for x in folds)
             avg_pf = np.mean([
                 min(x["pf"], 3) if np.isfinite(x["pf"]) else 3
                 for x in folds
@@ -650,75 +741,74 @@ def strategy_discovery(symbol, days, mode, capital, risk, fee, slip):
             avg_ret = np.mean([x["return"] for x in folds])
             worst_dd = min(x["dd"] for x in folds)
 
-            score = (
-                consistency * 25
+            # Discovery score is only a pre-ranking; it cannot rescue OOS failure.
+            discovery_score = (
+                wf_good / 3 * 40
                 + min(avg_pf / 1.5, 1) * 25
                 + min(max(avg_ret, 0) / 15, 1) * 20
-                + min(max(worst_dd + 20, 0) / 20, 1) * 20
-                + min(trades / 60, 1) * 10
+                + min(max(worst_dd + 20, 0) / 20, 1) * 15
             )
-
-            candidates.append((score, p, direction, folds))
+            candidates.append((discovery_score, p, direction, folds))
 
     if not candidates:
         return {"Coin": symbol, "Status": "NO EDGE"}
 
+    # Only the best few candidates are taken to the untouched OOS test.
     candidates.sort(key=lambda x: x[0], reverse=True)
-    score, p, direction, folds = candidates[0]
+    candidates = candidates[:5]
 
-    oos = backtest_direction(
-        final_oos, p, mode, capital, risk, fee, slip, direction
-    )
+    best = None
+    for discovery_score, p, direction, folds in candidates:
+        oos = backtest_direction(
+            final_oos, p, mode, capital, risk, fee, slip, direction,
+            return_pnls=True,
+        )
+        mc = monte_carlo_stats(
+            oos.get("pnls", np.array([])),
+            capital=capital,
+            simulations=1000,
+        )
+        status, confidence, reason = candidate_status(folds, oos, mc)
 
-    # Direction comparison on the untouched OOS set.
+        rank = (
+            1 if status == "TRADE" else 0,
+            confidence,
+            oos["pf"] if np.isfinite(oos["pf"]) else 3,
+            oos["return"],
+        )
+
+        if best is None or rank > best[0]:
+            best = (rank, discovery_score, p, direction, folds, oos, mc,
+                    status, confidence, reason)
+
+    _, discovery_score, p, direction, folds, oos, mc, status, confidence, reason = best
+
     opposite = "SHORT" if direction == "LONG" else "LONG"
     opposite_oos = backtest_direction(
         final_oos, p, mode, capital, risk, fee, slip, opposite
     )
 
-    # Extract approximate trade P&L by using OOS return only is insufficient
-    # for Monte Carlo; perform a compact synthetic bootstrap from fold P&L
-    # distributions reconstructed as average trade outcome.
-    avg_trade = (
-        oos["return"] / oos["trades"] if oos["trades"] else 0
-    )
-    synthetic = np.repeat(avg_trade, oos["trades"])
-    mc = monte_carlo_stats(synthetic, simulations=500)
-
-    robust = (
-        sum(x["return"] > 0 for x in folds) >= 2
-        and sum(x["pf"] >= 1.05 for x in folds) >= 2
-        and oos["pf"] >= 1.10
-        and oos["return"] > 0
-        and oos["trades"] >= 12
-        and oos["dd"] > -20
-        and mc["p05_return"] > -10
-    )
-
-    # Regime diagnostics on final OOS.
-    adx_med = float(final_oos.adx.median())
-    atr_med = float(final_oos.atr_pct.median())
-
-    label = "TRADE" if robust else (
-        "WATCH" if oos["pf"] >= 1 and oos["return"] > 0 else "NO TRADE"
+    wf_good = sum(
+        x["return"] > 0 and x["pf"] >= 1.05 for x in folds
     )
 
     return {
         "Coin": symbol,
-        "Status": label,
+        "Status": status,
         "Direction": direction,
-        "Discovery": round(float(score), 1),
-        "WF": f'{sum(x["return"] > 0 and x["pf"] >= 1 for x in folds)}/3',
+        "Confidence": confidence,
+        "Discovery": round(float(discovery_score), 1),
+        "WF": f"{wf_good}/3",
         "OOS PF": round(oos["pf"], 3),
         "OOS %": round(oos["return"], 2),
         "OOS trades": oos["trades"],
         "OOS WR": round(oos["wr"], 2),
         "OOS DD": round(oos["dd"], 2),
         "Opposite PF": round(opposite_oos["pf"], 3),
-        "MC P05 %": round(mc["p05_return"], 2),
-        "MC median %": round(mc["median_return"], 2),
-        "ADX median": round(adx_med, 1),
-        "ATR % median": round(atr_med, 2),
+        "MC P05 %": round(mc["p05_return"], 2) if np.isfinite(mc["p05_return"]) else np.nan,
+        "MC median %": round(mc["median_return"], 2) if np.isfinite(mc["median_return"]) else np.nan,
+        "MC P95 DD": round(mc["p95_dd"], 2) if np.isfinite(mc["p95_dd"]) else np.nan,
+        "Reason": reason,
         "RSI": f'{p["rsi_min"]}-{p["rsi_max"]}',
         "ADX": f'{p["adx_min"]}/{p["adx_htf"]}',
         "Volume": p["vol_min"],
@@ -799,7 +889,7 @@ def robust_candidate(folds, final_oos):
     return (
         positive_folds >= 2
         and pf_folds >= 2
-        and final_oos["pf"] >= 1.10
+        and final_oos["pf"] >= 1.20
         and final_oos["return"] > 0
         and final_oos["trades"] >= 15
         and final_oos["dd"] > -20
@@ -922,7 +1012,7 @@ def optimize_coin(symbol, days, mode, capital, risk, fee, slip):
 # UI
 # -----------------------------
 
-st.title("₿ Crypto DayTrader v8.3")
+st.title("₿ Crypto DayTrader v8.3.1")
 st.caption(
     "Strategy Discovery • long/short apart • walk-forward per fold • "
     "Monte Carlo • regime diagnostics • strict OOS • autosave"
@@ -1044,7 +1134,7 @@ with tab2:
         "periodes en een finale OOS-controle."
     )
 
-    discovery_key = f"discovery_{days}_{mode}_{capital}_{risk}_{fee}_{slip}"
+    discovery_key = f"discovery_v831_{days}_{mode}_{capital}_{risk}_{fee}_{slip}"
     if st.button("🧠 Start Strategy Discovery", type="primary"):
         drows = []
         pbar = st.progress(0)
@@ -1070,6 +1160,10 @@ with tab2:
 
     disc = st.session_state.get(discovery_key)
     if disc is not None:
+        st.caption(
+            "TRADE vereist minimaal 2/3 WF, ≥15 OOS-trades, OOS PF ≥1.20, "
+            "positief OOS-rendement, DD > -20% en MC P05 > -10%."
+        )
         order = {"TRADE": 0, "WATCH": 1, "NO TRADE": 2,
                  "NO EDGE": 3, "NO DATA": 4, "ERROR": 5}
         disc = disc.copy()
@@ -1183,10 +1277,23 @@ with tab4:
                 L = int(l[-1])
                 S = int(s[-1])
 
-                signal = (
+                raw_signal = (
                     "LONG" if L >= p["threshold"] and L > S + p["min_edge"]
                     else "SHORT"
                     if S >= p["threshold"] and S > L + p["min_edge"]
+                    else "WAIT"
+                )
+
+                allowed = saved.get("Status") in {"TRADE", "WATCH"}
+                saved_direction = saved.get("Direction")
+                signal = (
+                    raw_signal
+                    if allowed
+                    and raw_signal != "WAIT"
+                    and (
+                        not saved_direction
+                        or saved_direction == raw_signal
+                    )
                     else "WAIT"
                 )
 
