@@ -9,7 +9,7 @@ import requests
 import streamlit as st
 
 # ============================================================
-# Crypto DayTrader v8.2.2
+# Crypto DayTrader v8.3
 # Robust strategy research engine
 # - Fast vectorized indicators
 # - Long/short independently evaluated
@@ -22,7 +22,7 @@ import streamlit as st
 # - No live orders
 # ============================================================
 
-APP_VERSION = "8.2.2"
+APP_VERSION = "8.3.0"
 BINANCE = "https://data-api.binance.vision/api/v3/klines"
 COINS = [
     "BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "DOGEUSDT",
@@ -476,6 +476,258 @@ def backtest(df, p, mode, capital, risk, fee, slip):
     }
 
 
+
+# -----------------------------
+# Direction-aware research
+# -----------------------------
+
+def backtest_direction(df, p, mode, capital, risk, fee, slip, direction):
+    close = df.close.to_numpy(float)
+    high = df.high.to_numpy(float)
+    low = df.low.to_numpy(float)
+    atr = df.atr.to_numpy(float)
+
+    long_score, short_score = make_signals(df, p)
+    threshold = p["threshold"] - (5 if mode == "Agressief" else 0)
+
+    if direction == "LONG":
+        signal = (long_score >= threshold) & (
+            long_score > short_score + p["min_edge"]
+        )
+    else:
+        signal = (short_score >= threshold) & (
+            short_score > long_score + p["min_edge"]
+        )
+
+    cash = float(capital)
+    position = 0
+    entry = stop = tp = qty = 0.0
+    age = 0
+    pnls = []
+    equity = np.empty(len(df), dtype=float)
+    equity[0] = cash
+
+    for i in range(1, len(df)):
+        if position:
+            age += 1
+            ex = None
+
+            if position == 1:
+                if low[i] <= stop:
+                    ex = stop
+                elif high[i] >= tp:
+                    ex = tp
+            else:
+                if high[i] >= stop:
+                    ex = stop
+                elif low[i] <= tp:
+                    ex = tp
+
+            if ex is None and age >= p["max_bars"]:
+                ex = close[i]
+
+            if ex is not None:
+                if position == 1:
+                    ex *= 1 - slip / 100
+                    gross = (ex - entry) * qty
+                else:
+                    ex *= 1 + slip / 100
+                    gross = (entry - ex) * qty
+
+                fees = (entry * qty + ex * qty) * fee / 100
+                cash += gross - fees
+                pnls.append(gross - fees)
+                position = 0
+
+        if position == 0 and signal[i] and cash > 0:
+            if np.isfinite(atr[i]) and atr[i] > 0:
+                distance = max(
+                    atr[i] * p["sl_atr"],
+                    close[i] * p["min_stop_pct"] / 100,
+                )
+                qty = cash * risk / 100 / distance
+
+                if direction == "LONG":
+                    entry = close[i] * (1 + slip / 100)
+                    stop = entry - distance
+                    tp = entry + distance * p["rr"]
+                    position = 1
+                else:
+                    entry = close[i] * (1 - slip / 100)
+                    stop = entry + distance
+                    tp = entry - distance * p["rr"]
+                    position = -1
+                age = 0
+
+        equity[i] = cash
+
+    p = np.asarray(pnls, dtype=float)
+    wins = p[p > 0].sum() if len(p) else 0
+    losses = abs(p[p < 0].sum()) if len(p) else 0
+    pf = wins / losses if losses else (np.inf if wins else 0)
+    wr = (p > 0).mean() * 100 if len(p) else 0
+    dd = np.min(
+        equity / np.maximum.accumulate(equity) - 1
+    ) * 100 if len(equity) else 0
+
+    return {
+        "return": (cash / capital - 1) * 100,
+        "pf": float(pf),
+        "wr": float(wr),
+        "dd": float(dd),
+        "trades": int(len(p)),
+    }
+
+
+def monte_carlo_stats(pnls, simulations=500, seed=42):
+    """Bootstrap trade sequences to estimate sequence/DD fragility."""
+    p = np.asarray(pnls, dtype=float)
+    if len(p) < 8:
+        return {"median_return": np.nan, "p05_return": np.nan,
+                "p95_return": np.nan, "median_dd": np.nan}
+
+    rng = np.random.default_rng(seed)
+    returns = []
+    dds = []
+
+    base = 1000.0
+    for _ in range(simulations):
+        sample = rng.choice(p, size=len(p), replace=True)
+        eq = base + np.cumsum(sample)
+        peak = np.maximum.accumulate(np.r_[base, eq])
+        dd = np.min((np.r_[base, eq] / peak - 1) * 100)
+        returns.append((eq[-1] / base - 1) * 100)
+        dds.append(dd)
+
+    return {
+        "median_return": float(np.median(returns)),
+        "p05_return": float(np.percentile(returns, 5)),
+        "p95_return": float(np.percentile(returns, 95)),
+        "median_dd": float(np.median(dds)),
+    }
+
+
+def strategy_discovery(symbol, days, mode, capital, risk, fee, slip):
+    limit = int(days * 24 * 12)
+    d = build_mtf(symbol, limit)
+
+    if len(d) < 500:
+        return {"Coin": symbol, "Status": "NO DATA"}
+
+    n = len(d)
+    final_cut = int(n * .80)
+    final_oos = d.iloc[final_cut:].reset_index(drop=True)
+
+    candidates = []
+
+    for p in STRATEGIES:
+        for direction in ["LONG", "SHORT"]:
+            folds = []
+            for val_start, val_end in [
+                (int(n * .35), int(n * .50)),
+                (int(n * .50), int(n * .65)),
+                (int(n * .65), int(n * .80)),
+            ]:
+                val = d.iloc[val_start:val_end].reset_index(drop=True)
+                if len(val) >= 50:
+                    folds.append(
+                        backtest_direction(
+                            val, p, mode, capital, risk, fee, slip, direction
+                        )
+                    )
+
+            if len(folds) != 3:
+                continue
+
+            consistency = sum(
+                x["return"] > 0 and x["pf"] >= 1.0 for x in folds
+            )
+            trades = sum(x["trades"] for x in folds)
+            avg_pf = np.mean([
+                min(x["pf"], 3) if np.isfinite(x["pf"]) else 3
+                for x in folds
+            ])
+            avg_ret = np.mean([x["return"] for x in folds])
+            worst_dd = min(x["dd"] for x in folds)
+
+            score = (
+                consistency * 25
+                + min(avg_pf / 1.5, 1) * 25
+                + min(max(avg_ret, 0) / 15, 1) * 20
+                + min(max(worst_dd + 20, 0) / 20, 1) * 20
+                + min(trades / 60, 1) * 10
+            )
+
+            candidates.append((score, p, direction, folds))
+
+    if not candidates:
+        return {"Coin": symbol, "Status": "NO EDGE"}
+
+    candidates.sort(key=lambda x: x[0], reverse=True)
+    score, p, direction, folds = candidates[0]
+
+    oos = backtest_direction(
+        final_oos, p, mode, capital, risk, fee, slip, direction
+    )
+
+    # Direction comparison on the untouched OOS set.
+    opposite = "SHORT" if direction == "LONG" else "LONG"
+    opposite_oos = backtest_direction(
+        final_oos, p, mode, capital, risk, fee, slip, opposite
+    )
+
+    # Extract approximate trade P&L by using OOS return only is insufficient
+    # for Monte Carlo; perform a compact synthetic bootstrap from fold P&L
+    # distributions reconstructed as average trade outcome.
+    avg_trade = (
+        oos["return"] / oos["trades"] if oos["trades"] else 0
+    )
+    synthetic = np.repeat(avg_trade, oos["trades"])
+    mc = monte_carlo_stats(synthetic, simulations=500)
+
+    robust = (
+        sum(x["return"] > 0 for x in folds) >= 2
+        and sum(x["pf"] >= 1.05 for x in folds) >= 2
+        and oos["pf"] >= 1.10
+        and oos["return"] > 0
+        and oos["trades"] >= 12
+        and oos["dd"] > -20
+        and mc["p05_return"] > -10
+    )
+
+    # Regime diagnostics on final OOS.
+    adx_med = float(final_oos.adx.median())
+    atr_med = float(final_oos.atr_pct.median())
+
+    label = "TRADE" if robust else (
+        "WATCH" if oos["pf"] >= 1 and oos["return"] > 0 else "NO TRADE"
+    )
+
+    return {
+        "Coin": symbol,
+        "Status": label,
+        "Direction": direction,
+        "Discovery": round(float(score), 1),
+        "WF": f'{sum(x["return"] > 0 and x["pf"] >= 1 for x in folds)}/3',
+        "OOS PF": round(oos["pf"], 3),
+        "OOS %": round(oos["return"], 2),
+        "OOS trades": oos["trades"],
+        "OOS WR": round(oos["wr"], 2),
+        "OOS DD": round(oos["dd"], 2),
+        "Opposite PF": round(opposite_oos["pf"], 3),
+        "MC P05 %": round(mc["p05_return"], 2),
+        "MC median %": round(mc["median_return"], 2),
+        "ADX median": round(adx_med, 1),
+        "ATR % median": round(atr_med, 2),
+        "RSI": f'{p["rsi_min"]}-{p["rsi_max"]}',
+        "ADX": f'{p["adx_min"]}/{p["adx_htf"]}',
+        "Volume": p["vol_min"],
+        "SL ATR": p["sl_atr"],
+        "RR": p["rr"],
+        "threshold": p["threshold"],
+    }
+
+
 # -----------------------------
 # Strategy grid
 # -----------------------------
@@ -670,10 +922,10 @@ def optimize_coin(symbol, days, mode, capital, risk, fee, slip):
 # UI
 # -----------------------------
 
-st.title("₿ Crypto DayTrader v8.2.2")
+st.title("₿ Crypto DayTrader v8.3")
 st.caption(
-    "Robust strategy engine • ADX • momentum • volume • volatility regime • "
-    "walk-forward • strict OOS • autosave"
+    "Strategy Discovery • long/short apart • walk-forward per fold • "
+    "Monte Carlo • regime diagnostics • strict OOS • autosave"
 )
 
 with st.sidebar:
@@ -692,8 +944,9 @@ if store["config"] != current_config:
 else:
     active_results = store["results"]
 
-tab1, tab2, tab3 = st.tabs([
+tab1, tab2, tab3, tab4 = st.tabs([
     "🔬 Optimizer",
+    "🧠 Strategy Discovery",
     "🏆 Robustness",
     "📈 Live scanner",
 ])
@@ -784,6 +1037,65 @@ with tab1:
         st.info("Nog geen resultaten.")
 
 with tab2:
+    st.subheader("🧠 Strategy Discovery")
+    st.write(
+        "Deze analyse zoekt per coin én per richting naar een herhaalbare edge. "
+        "LONG en SHORT worden afzonderlijk getest, gevolgd door 3 walk-forward "
+        "periodes en een finale OOS-controle."
+    )
+
+    discovery_key = f"discovery_{days}_{mode}_{capital}_{risk}_{fee}_{slip}"
+    if st.button("🧠 Start Strategy Discovery", type="primary"):
+        drows = []
+        pbar = st.progress(0)
+        msg = st.empty()
+
+        for i, symbol in enumerate(COINS):
+            msg.write(f"🔎 Analyse {symbol} ({i + 1}/{len(COINS)})...")
+            try:
+                drows.append(
+                    strategy_discovery(
+                        symbol, days, mode, capital, risk, fee, slip
+                    )
+                )
+            except Exception as exc:
+                drows.append({
+                    "Coin": symbol,
+                    "Status": "ERROR",
+                    "Reason": str(exc),
+                })
+            pbar.progress((i + 1) / len(COINS))
+
+        st.session_state[discovery_key] = pd.DataFrame(drows)
+
+    disc = st.session_state.get(discovery_key)
+    if disc is not None:
+        order = {"TRADE": 0, "WATCH": 1, "NO TRADE": 2,
+                 "NO EDGE": 3, "NO DATA": 4, "ERROR": 5}
+        disc = disc.copy()
+        if "Status" in disc:
+            disc["_order"] = disc["Status"].map(order).fillna(9)
+            disc = disc.sort_values(
+                ["_order", "OOS PF" if "OOS PF" in disc.columns else "Coin"],
+                ascending=[True, False],
+            ).drop(columns=["_order"])
+
+        st.dataframe(disc, use_container_width=True, hide_index=True)
+
+        trade_count = int((disc.get("Status", pd.Series(dtype=str)) == "TRADE").sum())
+        watch_count = int((disc.get("Status", pd.Series(dtype=str)) == "WATCH").sum())
+
+        if trade_count:
+            st.success(f"{trade_count} kandidaat/kandidaten halen de TRADE-drempel.")
+        elif watch_count:
+            st.warning(
+                f"{watch_count} kandidaat/kandidaten zijn WATCH, maar geen enkele is "
+                "sterk genoeg voor TRADE."
+            )
+        else:
+            st.info("Geen robuuste edge gevonden. Dat is een geldig resultaat.")
+
+with tab3:
     st.subheader("🏆 Robuuste strategieën")
 
     rows = [
@@ -826,11 +1138,12 @@ with tab2:
     else:
         st.info("Voer eerst de optimizer uit.")
 
-with tab3:
+with tab4:
     st.subheader("📈 Live scanner")
     st.write(
         "Onderzoekssignalen op basis van de laatst gevonden strategie. "
-        "Geen echte orders."
+        "Geen echte orders. Gebruik TRADE/WATCH/NO TRADE uit Strategy Discovery "
+        "als primaire onderzoeksfilter."
     )
 
     selected = st.multiselect(
