@@ -155,43 +155,52 @@ with tab1:
     st.write(f"De app test een beperkte grid van strategieën op ongeveer {days} dagen. Daarna wordt de beste kandidaat niet automatisch als winnaar beschouwd: hij moet ook buiten de trainingsperiode overeind blijven.")
     if st.button("🚀 Start optimizer",type="primary"):
         rows=[]
-        for symbol in COINS:
-            with st.spinner(f"Test {symbol}..."):
-                try:
-                    d=make_mtf(symbol,int(days*24*12))
-                    cut=int(len(d)*.65)
-                    train=d.iloc[:cut].reset_index(drop=True)
-                    test=d.iloc[cut:].reset_index(drop=True)
-                    # Search on training period only.
-                    candidates=[]
-                    for p in PARAMS:
-                        rr=backtest(train,p,mode,capital,risk,fee,slip)
-                        if rr["trades"]>=20:
-                            candidates.append((quality(rr),p,rr))
-                    candidates.sort(key=lambda x:x[0],reverse=True)
-                    best=candidates[0] if candidates else None
-                    if best:
-                        _,p,ins=best
-                        oos=backtest(test,p,mode,capital,risk,fee,slip)
-                        rows.append({"Coin":symbol,"IS PF":ins["pf"],"IS %":ins["return"],"IS trades":ins["trades"],
-                                     "OOS PF":oos["pf"],"OOS %":oos["return"],"OOS trades":oos["trades"],
-                                     "OOS WR":oos["wr"],"OOS DD":oos["dd"],"fast":p["fast"],"slow":p["slow"],
-                                     "trend":p["trend"],"SL ATR":p["atr_stop"],"RR":p["rr"],"threshold":p["threshold"]})
-                    else:
-                        rows.append({"Coin":symbol,"IS PF":np.nan,"IS %":np.nan,"IS trades":0,"OOS PF":np.nan,"OOS %":np.nan,"OOS trades":0,"OOS WR":0,"OOS DD":0})
-                except Exception as e:
-                    rows.append({"Coin":symbol,"FOUT":str(e)})
-        out=pd.DataFrame(rows)
-        st.session_state["v7opt"]=out
-    if "v7opt" in st.session_state:
-        out=st.session_state["v7opt"].sort_values(["OOS PF","OOS %"],ascending=False)
+        progress=st.progress(0)
+        status=st.empty()
+        for n,symbol in enumerate(COINS,1):
+            status.write(f"Test {symbol} ({n}/{len(COINS)})...")
+            try:
+                d=make_mtf(symbol,int(days*24*12))
+                if len(d)<100:
+                    raise RuntimeError(f"Te weinig bruikbare candles: {len(d)}")
+                cut=int(len(d)*.65)
+                train=d.iloc[:cut].reset_index(drop=True)
+                test=d.iloc[cut:].reset_index(drop=True)
+                candidates=[]
+                for p in PARAMS:
+                    rr=backtest(train,p,mode,capital,risk,fee,slip)
+                    if rr["trades"]>=20:
+                        candidates.append((quality(rr),p,rr))
+                candidates.sort(key=lambda x:x[0],reverse=True)
+                best=candidates[0] if candidates else None
+                if best:
+                    _,p,ins=best
+                    oos=backtest(test,p,mode,capital,risk,fee,slip)
+                    rows.append({"Coin":symbol,"IS PF":ins["pf"],"IS %":ins["return"],"IS trades":ins["trades"],
+                                 "OOS PF":oos["pf"],"OOS %":oos["return"],"OOS trades":oos["trades"],
+                                 "OOS WR":oos["wr"],"OOS DD":oos["dd"],"fast":p["fast"],"slow":p["slow"],
+                                 "trend":p["trend"],"SL ATR":p["atr_stop"],"RR":p["rr"],"threshold":p["threshold"]})
+                else:
+                    rows.append({"Coin":symbol,"IS PF":np.nan,"IS %":np.nan,"IS trades":0,
+                                 "OOS PF":np.nan,"OOS %":np.nan,"OOS trades":0,"OOS WR":0,"OOS DD":0})
+            except Exception as e:
+                rows.append({"Coin":symbol,"IS PF":np.nan,"IS %":np.nan,"IS trades":0,
+                             "OOS PF":np.nan,"OOS %":np.nan,"OOS trades":0,"OOS WR":0,"OOS DD":0,
+                             "FOUT":str(e)})
+            progress.progress(n/len(COINS))
+        st.session_state["v7opt"]=pd.DataFrame(rows)
+        status.success("Optimizer klaar.")
+    out=st.session_state.get("v7opt")
+    if out is not None:
+        out=out.sort_values(["OOS PF","OOS %"],ascending=False)
         st.dataframe(out.style.format({c:"{:.2f}" for c in out.columns if c not in ["Coin","FOUT","IS trades","OOS trades","fast","slow","trend","threshold"]}),use_container_width=True,hide_index=True)
 
 with tab2:
     st.subheader("Robustness / walk-forward")
     st.write("Een kandidaat telt pas als interessant wanneer hij winstgevend blijft op ongeziene data. De optimizer zoekt uitsluitend in de trainingsperiode.")
-    if "v7opt" in st.session_state:
-        out=st.session_state["v7opt"].copy()
+    out=st.session_state.get("v7opt")
+    if out is not None:
+        out=out.copy()
         robust=out[(out.get("OOS PF",0)>=1.2)&(out.get("OOS trades",0)>=20)&(out.get("OOS DD",0)>-15)&(out.get("OOS %",0)>0)]
         if len(robust): st.success(f"{len(robust)} kandidaten voldoen voorlopig aan de OOS-filters.")
         else: st.warning("Geen kandidaat haalt alle OOS-filters. Dat betekent: verder verbeteren, niet live traden.")
