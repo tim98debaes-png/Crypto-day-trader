@@ -13,7 +13,7 @@ COINS=["BTCUSDT","ETHUSDT","SOLUSDT","XRPUSDT","DOGEUSDT","ADAUSDT","AVAXUSDT","
 
 @st.cache_data(ttl=60, show_spinner=False)
 def fetch(symbol, interval, limit=3000):
-    rows=[]; end=None; left=min(int(limit),3000)
+    rows=[]; end=None; left=min(int(limit),10000)
     while left:
         n=min(1000,left); p={"symbol":symbol,"interval":interval,"limit":n}
         if end is not None:p["endTime"]=end
@@ -49,22 +49,37 @@ def add_ind(d,p):
 
 def make_mtf(symbol,limit,p):
     d5=add_ind(fetch(symbol,"5m",limit),p)
-    d15=add_ind(fetch(symbol,"15m",min(3000,max(500,limit//3+100))),p)
-    d1=add_ind(fetch(symbol,"1h",min(3000,max(500,limit//12+100))),p)
-    # Completed HTF candles only: shift their usable timestamp to the next candle open.
-    def prep(d,prefix):
+    d15=add_ind(fetch(symbol,"15m",max(500,min(3000,limit//3+100))),p)
+    d1=add_ind(fetch(symbol,"1h",max(500,min(3000,limit//12+100))),p)
+
+    def prep(d, lname, sname):
         z=d.copy()
-        z["L"],z["S"]=score(z.iloc[-1],p) if False else (0,0)
         vals=[score(row,p) for _,row in z.iterrows()]
-        z["L"]=[v[0] for v in vals]; z["S"]=[v[1] for v in vals]
+        z[lname]=[v[0] for v in vals]
+        z[sname]=[v[1] for v in vals]
+        # A higher-timeframe candle is usable only after it has closed.
         z["available"]=z.time.shift(-1)
-        return z[["available","L","S"]].dropna()
-    a=prep(d15,"15"); b=prep(d1,"1")
+        return z[["available",lname,sname]].dropna()
+
+    a=prep(d15,"L15","S15")
+    b=prep(d1,"L1","S1")
+
     vals=[score(row,p) for _,row in d5.iterrows()]
-    d5["L5"]=[v[0] for v in vals]; d5["S5"]=[v[1] for v in vals]
-    out=pd.merge_asof(d5.sort_values("time"),a.sort_values("available"),left_on="time",right_on="available",direction="backward")
-    out=pd.merge_asof(out,b.sort_values("available"),left_on="time",right_on="available",direction="backward")
-    return out.dropna(subset=["L","S","L5","S5"]).rename(columns={"L":"L15","S":"S15"}).reset_index(drop=True)
+    d5["L5"]=[v[0] for v in vals]
+    d5["S5"]=[v[1] for v in vals]
+
+    out=pd.merge_asof(
+        d5.sort_values("time"),
+        a.sort_values("available"),
+        left_on="time",right_on="available",direction="backward"
+    )
+    out=pd.merge_asof(
+        out.sort_values("time"),
+        b.sort_values("available"),
+        left_on="time",right_on="available",direction="backward"
+    )
+    needed=["L1","S1","L15","S15","L5","S5"]
+    return out.dropna(subset=needed).reset_index(drop=True)
 
 def score(r,p):
     L=S=0
@@ -190,6 +205,9 @@ with tab1:
             progress.progress(n/len(COINS))
         st.session_state["v7opt"]=pd.DataFrame(rows)
         status.success("Optimizer klaar.")
+        failed=[r for r in rows if "FOUT" in r]
+        if failed:
+            st.warning(f"{len(failed)} coin(s) konden niet worden getest. Bekijk de kolom FOUT in de tabel.")
     out=st.session_state.get("v7opt")
     if out is not None:
         out=out.sort_values(["OOS PF","OOS %"],ascending=False)
@@ -201,7 +219,10 @@ with tab2:
     out=st.session_state.get("v7opt")
     if out is not None:
         out=out.copy()
-        robust=out[(out.get("OOS PF",0)>=1.2)&(out.get("OOS trades",0)>=20)&(out.get("OOS DD",0)>-15)&(out.get("OOS %",0)>0)]
+        if "OOS PF" in out.columns:
+            robust=out[(out["OOS PF"].fillna(0)>=1.2)&(out["OOS trades"].fillna(0)>=20)&(out["OOS DD"].fillna(0)>-15)&(out["OOS %"].fillna(0)>0)]
+        else:
+            robust=pd.DataFrame()
         if len(robust): st.success(f"{len(robust)} kandidaten voldoen voorlopig aan de OOS-filters.")
         else: st.warning("Geen kandidaat haalt alle OOS-filters. Dat betekent: verder verbeteren, niet live traden.")
         st.dataframe(robust,use_container_width=True,hide_index=True)
