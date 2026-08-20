@@ -9,7 +9,7 @@ import requests
 import streamlit as st
 
 # ============================================================
-# Crypto DayTrader v8.3.1
+# Crypto DayTrader v8.3.2
 # Robust strategy research engine
 # - Fast vectorized indicators
 # - Long/short independently evaluated
@@ -22,13 +22,13 @@ import streamlit as st
 # - No live orders
 # ============================================================
 
-APP_VERSION = "8.3.1"
+APP_VERSION = "8.3.2"
 BINANCE = "https://data-api.binance.vision/api/v3/klines"
 COINS = [
     "BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "DOGEUSDT",
     "ADAUSDT", "AVAXUSDT", "LINKUSDT", "LTCUSDT", "DOTUSDT",
 ]
-RESULTS_FILE = "optimizer_results_v831.json"
+RESULTS_FILE = "optimizer_results_v832.json"
 
 st.set_page_config(
     page_title=f"Crypto DayTrader v{APP_VERSION}",
@@ -672,34 +672,6 @@ def candidate_status(folds, oos, mc):
     )
 
 
-def monte_carlo_stats(pnls, simulations=500, seed=42):
-    """Bootstrap trade sequences to estimate sequence/DD fragility."""
-    p = np.asarray(pnls, dtype=float)
-    if len(p) < 8:
-        return {"median_return": np.nan, "p05_return": np.nan,
-                "p95_return": np.nan, "median_dd": np.nan}
-
-    rng = np.random.default_rng(seed)
-    returns = []
-    dds = []
-
-    base = 1000.0
-    for _ in range(simulations):
-        sample = rng.choice(p, size=len(p), replace=True)
-        eq = base + np.cumsum(sample)
-        peak = np.maximum.accumulate(np.r_[base, eq])
-        dd = np.min((np.r_[base, eq] / peak - 1) * 100)
-        returns.append((eq[-1] / base - 1) * 100)
-        dds.append(dd)
-
-    return {
-        "median_return": float(np.median(returns)),
-        "p05_return": float(np.percentile(returns, 5)),
-        "p95_return": float(np.percentile(returns, 95)),
-        "median_dd": float(np.median(dds)),
-    }
-
-
 def strategy_discovery(symbol, days, mode, capital, risk, fee, slip):
     limit = int(days * 24 * 12)
     d = build_mtf(symbol, limit)
@@ -1012,7 +984,7 @@ def optimize_coin(symbol, days, mode, capital, risk, fee, slip):
 # UI
 # -----------------------------
 
-st.title("₿ Crypto DayTrader v8.3.1")
+st.title("₿ Crypto DayTrader v8.3.2")
 st.caption(
     "Strategy Discovery • long/short apart • walk-forward per fold • "
     "Monte Carlo • regime diagnostics • strict OOS • autosave"
@@ -1134,7 +1106,7 @@ with tab2:
         "periodes en een finale OOS-controle."
     )
 
-    discovery_key = f"discovery_v831_{days}_{mode}_{capital}_{risk}_{fee}_{slip}"
+    discovery_key = f"discovery_v832_{days}_{mode}_{capital}_{risk}_{fee}_{slip}"
     if st.button("🧠 Start Strategy Discovery", type="primary"):
         drows = []
         pbar = st.progress(0)
