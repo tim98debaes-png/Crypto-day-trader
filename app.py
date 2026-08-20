@@ -9,7 +9,7 @@ import requests
 import streamlit as st
 
 # ============================================================
-# Crypto DayTrader v8.2
+# Crypto DayTrader v8.2.1
 # Robust strategy research engine
 # - Fast vectorized indicators
 # - Long/short independently evaluated
@@ -22,7 +22,7 @@ import streamlit as st
 # - No live orders
 # ============================================================
 
-APP_VERSION = "8.2.0"
+APP_VERSION = "8.2.1"
 BINANCE = "https://data-api.binance.vision/api/v3/klines"
 COINS = [
     "BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "DOGEUSDT",
@@ -268,27 +268,30 @@ def build_mtf(symbol, limit):
 
     out = pd.merge_asof(
         d5.sort_values("time"),
-        htf(d15, "15").sort_values("available"),
+        htf(d15, "_15").sort_values("available"),
         left_on="time",
         right_on="available",
         direction="backward",
     )
     out = pd.merge_asof(
         out.sort_values("time"),
-        htf(d1, "1h").sort_values("available"),
+        htf(d1, "_1h").sort_values("available"),
         left_on="time",
         right_on="available",
         direction="backward",
     )
 
-    return out.dropna(
-        subset=[
-            "atr", "adx",
-            "ema20_15", "ema50_15", "ema200_15",
-            "ema20_1h", "ema50_1h", "ema200_1h",
-            "rsi15", "rsi1h", "adx15", "adx1h",
-        ]
-    ).reset_index(drop=True)
+    required = [
+        "atr", "adx",
+        "ema20_15", "ema50_15", "ema200_15",
+        "ema20_1h", "ema50_1h", "ema200_1h",
+        "rsi15", "rsi1h", "adx15", "adx1h",
+    ]
+    missing = [c for c in required if c not in out.columns]
+    if missing:
+        raise KeyError(f"MTF-kolommen ontbreken: {missing}")
+
+    return out.dropna(subset=required).reset_index(drop=True)
 
 
 # -----------------------------
@@ -665,7 +668,7 @@ def optimize_coin(symbol, days, mode, capital, risk, fee, slip):
 # UI
 # -----------------------------
 
-st.title("₿ Crypto DayTrader v8.2")
+st.title("₿ Crypto DayTrader v8.2.1")
 st.caption(
     "Robust strategy engine • ADX • momentum • volume • volatility regime • "
     "walk-forward • strict OOS • autosave"
@@ -790,12 +793,14 @@ with tab2:
     if rows:
         d = pd.DataFrame(rows)
 
-        robust = (
-            d[d["Status"].eq("ROBUST")]
-            .sort_values("Robustness", ascending=False)
-            if "Status" in d
-            else pd.DataFrame()
-        )
+        if "Status" in d:
+            robust = d[d["Status"].eq("ROBUST")].copy()
+            if "Robustness" in robust.columns:
+                robust = robust.sort_values(
+                    "Robustness", ascending=False, na_position="last"
+                )
+        else:
+            robust = pd.DataFrame()
 
         if len(robust):
             st.success(
