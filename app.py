@@ -9,7 +9,7 @@ import requests
 import streamlit as st
 
 # ============================================================
-# Crypto DayTrader v8.2.1
+# Crypto DayTrader v8.2.2
 # Robust strategy research engine
 # - Fast vectorized indicators
 # - Long/short independently evaluated
@@ -22,7 +22,7 @@ import streamlit as st
 # - No live orders
 # ============================================================
 
-APP_VERSION = "8.2.1"
+APP_VERSION = "8.2.2"
 BINANCE = "https://data-api.binance.vision/api/v3/klines"
 COINS = [
     "BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "DOGEUSDT",
@@ -253,11 +253,13 @@ def build_mtf(symbol, limit):
         z["available"] = z.time.shift(-1)
         z = z.dropna(subset=["available"])
 
+        # Keep naming explicit: EMA columns use "_15"/"_1h",
+        # while momentum columns use "rsi15"/"rsi1h", etc.
         rename = {
-            "close": f"close{suffix}",
-            "ema20": f"ema20{suffix}",
-            "ema50": f"ema50{suffix}",
-            "ema200": f"ema200{suffix}",
+            "close": f"close_{suffix}",
+            "ema20": f"ema20_{suffix}",
+            "ema50": f"ema50_{suffix}",
+            "ema200": f"ema200_{suffix}",
             "rsi": f"rsi{suffix}",
             "macd_hist": f"macd{suffix}",
             "adx": f"adx{suffix}",
@@ -268,14 +270,14 @@ def build_mtf(symbol, limit):
 
     out = pd.merge_asof(
         d5.sort_values("time"),
-        htf(d15, "_15").sort_values("available"),
+        htf(d15, "15").sort_values("available"),
         left_on="time",
         right_on="available",
         direction="backward",
     )
     out = pd.merge_asof(
         out.sort_values("time"),
-        htf(d1, "_1h").sort_values("available"),
+        htf(d1, "1h").sort_values("available"),
         left_on="time",
         right_on="available",
         direction="backward",
@@ -668,7 +670,7 @@ def optimize_coin(symbol, days, mode, capital, risk, fee, slip):
 # UI
 # -----------------------------
 
-st.title("₿ Crypto DayTrader v8.2.1")
+st.title("₿ Crypto DayTrader v8.2.2")
 st.caption(
     "Robust strategy engine • ADX • momentum • volume • volatility regime • "
     "walk-forward • strict OOS • autosave"
