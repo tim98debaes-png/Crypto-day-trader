@@ -6,7 +6,7 @@ import streamlit as st
 import plotly.graph_objects as go
 from itertools import product
 
-st.set_page_config(page_title="Crypto DayTrader v7.3", page_icon="₿", layout="wide")
+st.set_page_config(page_title="Crypto DayTrader v7.3.2", page_icon="₿", layout="wide")
 
 BINANCE="https://data-api.binance.vision/api/v3/klines"
 COINS=["BTCUSDT","ETHUSDT","SOLUSDT","XRPUSDT","DOGEUSDT","ADAUSDT","AVAXUSDT","LINKUSDT","LTCUSDT","DOTUSDT"]
@@ -129,7 +129,13 @@ def make_mtf(symbol,limit,p=None):
         left_on="time",right_on="available",direction="backward"
     )
     needed=["L1","S1","L15","S15","L5","S5"]
-    return out.dropna(subset=needed).reset_index(drop=True)
+    out=out.dropna(subset=needed).reset_index(drop=True)
+    # Defensive: guarantee ATR columns survive any future merge changes.
+    if "atr" not in out.columns:
+        base=d5[["time","atr","atr_pct"]].drop_duplicates("time")
+        out=out.drop(columns=[c for c in ["atr","atr_pct"] if c in out.columns],errors="ignore")
+        out=out.merge(base,on="time",how="left")
+    return out.dropna(subset=["atr"]).reset_index(drop=True)
 
 def score(r,p):
     L=S=0
@@ -148,6 +154,17 @@ def score(r,p):
     return min(L,100),min(S,100)
 
 def backtest(df,p,mode="Conservatief",capital=1000,risk=1,fee=.10,slip=.03):
+    """Backtest with defensive indicator handling.
+    ATR is reconstructed from OHLC if it was lost during a dataframe merge.
+    """
+    df=df.copy().reset_index(drop=True)
+    if "atr" not in df.columns:
+        tr=pd.concat([
+            df["high"]-df["low"],
+            (df["high"]-df["close"].shift()).abs(),
+            (df["low"]-df["close"].shift()).abs()
+        ],axis=1).max(axis=1)
+        df["atr"]=tr.ewm(alpha=1/p["atr"],adjust=False).mean()
     cash=float(capital);pos=None;trades=[];eq=[]
     threshold=p["threshold"] if mode=="Conservatief" else max(55,p["threshold"]-10)
     for i in range(1,len(df)):
@@ -155,11 +172,11 @@ def backtest(df,p,mode="Conservatief",capital=1000,risk=1,fee=.10,slip=.03):
         if pos:
             ex=None;reason=None
             if pos["side"]=="LONG":
-                if r.low<=pos["stop"]:ex=pos["stop"];reason="SL"
-                elif r.high>=pos["tp"]:ex=pos["tp"];reason="TP"
+                if r.low<=pos["stop"]: ex=pos["stop"];reason="SL"
+                elif r.high>=pos["tp"]: ex=pos["tp"];reason="TP"
             else:
-                if r.high>=pos["stop"]:ex=pos["stop"];reason="SL"
-                elif r.low<=pos["tp"]:ex=pos["tp"];reason="TP"
+                if r.high>=pos["stop"]: ex=pos["stop"];reason="SL"
+                elif r.low<=pos["tp"]: ex=pos["tp"];reason="TP"
             if ex is not None:
                 ex*=1-slip/100 if pos["side"]=="LONG" else 1+slip/100
                 gross=(ex-pos["entry"])*pos["qty"] if pos["side"]=="LONG" else (pos["entry"]-ex)*pos["qty"]
@@ -168,11 +185,14 @@ def backtest(df,p,mode="Conservatief",capital=1000,risk=1,fee=.10,slip=.03):
                 trades.append({**pos,"Exit":ex,"P&L":pnl,"Result":reason,"Exit time":r.time});pos=None
         if pos is None:
             L5,S5=score(r,p)
-            L15,S15=float(r.L15),float(r.S15);L1,S1=float(r.L1),float(r.S1)
-            L=.45*L1+.35*L15+.20*L5;S=.45*S1+.35*S15+.20*S5
+            L15,S15=float(r["L15"]),float(r["S15"])
+            L1,S1=float(r["L1"]),float(r["S1"])
+            L=.45*L1+.35*L15+.20*L5
+            S=.45*S1+.35*S15+.20*S5
             sig="LONG" if L>=threshold and L>S+8 else ("SHORT" if S>=threshold and S>L+8 else "WAIT")
-            if sig!="WAIT" and r.atr>0:
-                dist=max(float(r.atr)*p["atr_stop"],float(r.close)*.004)
+            atr=float(r["atr"])
+            if sig!="WAIT" and np.isfinite(atr) and atr>0:
+                dist=max(atr*p["atr_stop"],float(r.close)*.004)
                 qty=max(cash,0)*risk/100/dist
                 entry=float(r.close)*(1+slip/100 if sig=="LONG" else 1-slip/100)
                 rr=p["rr"]
@@ -202,8 +222,8 @@ def quality(r):
     else:pf=r["pf"]
     return pf + min(r["trades"]/100,1)*.15 + r["return"]/100 - abs(r["dd"])/100
 
-st.title("₿ Crypto DayTrader v7.3")
-st.caption("Strategy Optimizer v7.3 • 30-day research • in-sample / out-of-sample / walk-forward • anti-overfitting guardrails")
+st.title("₿ Crypto DayTrader v7.3.2")
+st.caption("Strategy Optimizer v7.3.2 • 30-day research • in-sample / out-of-sample / walk-forward • anti-overfitting guardrails")
 
 with st.sidebar:
     mode=st.radio("Strategie",["Conservatief","Agressief"])
