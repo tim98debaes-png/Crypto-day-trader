@@ -98,39 +98,50 @@ def mtf(symbol,limit,p):
     return out.dropna(subset=["L1","S1","L15","S15","L5","S5","atr"]).reset_index(drop=True)
 
 def backtest(df,p,mode,capital,risk,fee,slip):
-    cash=float(capital); pos=None; trades=[]; eq=[]
+    # Fast backtest: vectorized signal generation; one compact candle loop.
+    close=df["close"].to_numpy(float); high=df["high"].to_numpy(float); low=df["low"].to_numpy(float); atr=df["atr"].to_numpy(float)
+    L5=df["L5"].to_numpy(float); S5=df["S5"].to_numpy(float); L15=df["L15"].to_numpy(float); S15=df["S15"].to_numpy(float); L1=df["L1"].to_numpy(float); S1=df["S1"].to_numpy(float)
     threshold=p["threshold"] if mode=="Conservatief" else max(55,p["threshold"]-10)
-    for _,r in df.reset_index(drop=True).iterrows():
+    L=.45*L1+.35*L15+.20*L5; S=.45*S1+.35*S15+.20*S5
+    long_sig=(L>=threshold)&(L>S+8); short_sig=(S>=threshold)&(S>L+8)
+    cash=float(capital); pos=0; entry=stop=tp=qty=0.0; pnls=[]; eq=np.empty(len(df),dtype=float); eq[0]=cash
+    for i in range(1,len(df)):
         if pos:
-            ex=reason=None
-            if pos["side"]=="LONG":
-                if r.low<=pos["stop"]: ex,reason=pos["stop"],"SL"
-                elif r.high>=pos["tp"]: ex,reason=pos["tp"],"TP"
+            ex=None
+            if pos==1:
+                if low[i]<=stop: ex=stop
+                elif high[i]>=tp: ex=tp
+                if ex is not None:
+                    ex*=1-slip/100; gross=(ex-entry)*qty
             else:
-                if r.high>=pos["stop"]: ex,reason=pos["stop"],"SL"
-                elif r.low<=pos["tp"]: ex,reason=pos["tp"],"TP"
+                if high[i]>=stop: ex=stop
+                elif low[i]<=tp: ex=tp
+                if ex is not None:
+                    ex*=1+slip/100; gross=(entry-ex)*qty
             if ex is not None:
-                ex*=1-slip/100 if pos["side"]=="LONG" else 1+slip/100
-                gross=(ex-pos["entry"])*pos["qty"] if pos["side"]=="LONG" else (pos["entry"]-ex)*pos["qty"]
-                pnl=gross-(pos["entry"]*pos["qty"]+ex*pos["qty"])*fee/100; cash+=pnl
-                trades.append({"P&L":pnl,"Result":reason}); pos=None
-        if pos is None and cash>0:
-            l5,s5=score(r,p); L=.45*r.L1+.35*r.L15+.20*l5; S=.45*r.S1+.35*r.S15+.20*s5
-            sig="LONG" if L>=threshold and L>S+8 else "SHORT" if S>=threshold and S>L+8 else "WAIT"
-            atr=float(r.atr)
-            if sig!="WAIT" and np.isfinite(atr) and atr>0:
-                dist=max(atr*p["atr_stop"],float(r.close)*.004); qty=cash*risk/100/dist
-                entry=float(r.close)*(1+slip/100 if sig=="LONG" else 1-slip/100)
-                pos={"side":sig,"entry":entry,"stop":entry-dist if sig=="LONG" else entry+dist,"tp":entry+dist*p["rr"] if sig=="LONG" else entry-dist*p["rr"],"qty":qty}
-        eq.append(cash)
-    t=pd.DataFrame(trades); e=pd.Series(eq,dtype=float)
-    wins=t.loc[t["P&L"]>0,"P&L"].sum() if len(t) else 0; losses=abs(t.loc[t["P&L"]<0,"P&L"].sum()) if len(t) else 0
-    return {"return":(cash/capital-1)*100,"pf":wins/losses if losses else (np.inf if wins else 0),"wr":(t["P&L"]>0).mean()*100 if len(t) else 0,"dd":(e/e.cummax()-1).min()*100 if len(e) else 0,"trades":len(t)}
+                cash += gross-(entry*qty+ex*qty)*fee/100; pnls.append(cash); pos=0
+        if pos==0 and cash>0 and np.isfinite(atr[i]) and atr[i]>0:
+            side=1 if long_sig[i] else -1 if short_sig[i] else 0
+            if side:
+                dist=max(atr[i]*p["atr_stop"],close[i]*.004); qty=cash*risk/100/dist
+                if side==1:
+                    entry=close[i]*(1+slip/100); stop=entry-dist; tp=entry+dist*p["rr"]
+                else:
+                    entry=close[i]*(1-slip/100); stop=entry+dist; tp=entry-dist*p["rr"]
+                pos=side
+        eq[i]=cash
+    # Recover trade P&L from changes in cash at exits.
+    cash_path=np.asarray(eq); dif=np.diff(cash_path); trade_pnls=dif[np.abs(dif)>1e-12]
+    wins=trade_pnls[trade_pnls>0].sum() if trade_pnls.size else 0; losses=abs(trade_pnls[trade_pnls<0].sum()) if trade_pnls.size else 0
+    pf=wins/losses if losses else (np.inf if wins else 0); wr=(trade_pnls>0).mean()*100 if trade_pnls.size else 0
+    dd=(cash_path/np.maximum.accumulate(cash_path)-1).min()*100 if len(cash_path) else 0
+    return {"return":(cash/capital-1)*100,"pf":pf,"wr":wr,"dd":dd,"trades":int(trade_pnls.size),"final":cash,"log":pd.DataFrame(),"equity":pd.Series(cash_path)}
 
 PARAMS=[]
-for fast,slow,trend,stop,rr,thr in product([9,20],[21,50],[50,200],[1,1.25,1.5],[1.5,2,2.5],[65,70,75]):
+for fast,slow,trend in product([9,20],[21,50],[50,200]):
     if fast>=slow: continue
-    PARAMS.append({"fast":fast,"slow":slow,"trend":trend,"rsi":14,"atr":14,"rsi_long_low":50,"rsi_long_high":68,"rsi_short_low":32,"rsi_short_high":50,"vol_mult":1.15,"atr_min":.15,"atr_max":4,"atr_stop":stop,"rr":rr,"threshold":thr})
+    for stop,rr,thr in [(1.0,1.5,65),(1.0,2.0,70),(1.25,1.5,65),(1.25,2.0,70),(1.25,2.5,75),(1.5,1.5,65),(1.5,2.0,70),(1.5,2.5,75),(1.75,1.5,65),(1.75,2.0,70),(1.75,2.5,75),(2.0,2.0,70)]:
+        PARAMS.append({"fast":fast,"slow":slow,"trend":trend,"rsi":14,"atr":14,"rsi_long_low":50,"rsi_long_high":68,"rsi_short_low":32,"rsi_short_high":50,"vol_mult":1.15,"atr_min":.15,"atr_max":4,"atr_stop":stop,"rr":rr,"threshold":thr})
 
 def optimize(symbol,days,mode,capital,risk,fee,slip):
     limit=days*24*12; candidates=[]
@@ -151,8 +162,8 @@ def optimize(symbol,days,mode,capital,risk,fee,slip):
     d=mtf(symbol,limit,p); cut=int(len(d)*.65); oos=backtest(d.iloc[cut:],p,mode,capital,risk,fee,slip)
     return {"Coin":symbol,"Status":"OK","IS PF":ins["pf"],"IS %":ins["return"],"IS trades":ins["trades"],"OOS PF":oos["pf"],"OOS %":oos["return"],"OOS trades":oos["trades"],"OOS WR":oos["wr"],"OOS DD":oos["dd"],"fast":p["fast"],"slow":p["slow"],"trend":p["trend"],"SL ATR":p["atr_stop"],"RR":p["rr"],"threshold":p["threshold"]}
 
-st.title("₿ Crypto DayTrader v8")
-st.caption("Optimizer met autosave, hervatten na restart, MTF 5m/15m/1h en OOS-validatie")
+st.title("₿ Crypto DayTrader v8.1 FAST")
+st.caption("Snellere optimizer met autosave, hervatten, MTF 5m/15m/1h en OOS-validatie")
 
 with st.sidebar:
     mode=st.radio("Strategie",["Conservatief","Agressief"])
