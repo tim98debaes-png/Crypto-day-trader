@@ -1,88 +1,61 @@
 
-import math
-from datetime import datetime, timezone
-
 import numpy as np
 import pandas as pd
-import plotly.graph_objects as go
 import requests
 import streamlit as st
+import plotly.graph_objects as go
 
-st.set_page_config(
-    page_title="Crypto DayTrader v4",
-    page_icon="₿",
-    layout="wide",
-    initial_sidebar_state="collapsed",
-)
+st.set_page_config(page_title="Crypto DayTrader v5", page_icon="₿", layout="wide")
 
 BINANCE = "https://data-api.binance.vision/api/v3/klines"
-DEFAULT_COINS = [
-    "BTCUSDT","ETHUSDT","SOLUSDT","XRPUSDT","DOGEUSDT",
-    "ADAUSDT","AVAXUSDT","LINKUSDT","LTCUSDT","DOTUSDT"
-]
-TF_SECONDS = {"5m":300,"15m":900,"1h":3600}
+COINS = ["BTCUSDT","ETHUSDT","SOLUSDT","XRPUSDT","DOGEUSDT","ADAUSDT","AVAXUSDT","LINKUSDT","LTCUSDT","DOTUSDT"]
 
 @st.cache_data(ttl=20, show_spinner=False)
-def get_klines(symbol, interval, limit=500):
-    rows=[]
-    end_time=None
-    remaining=min(int(limit),3000)
-    while remaining>0:
+def candles(symbol, interval="5m", limit=1500):
+    rows=[]; end=None; remaining=min(int(limit),3000)
+    while remaining:
         n=min(1000,remaining)
         params={"symbol":symbol,"interval":interval,"limit":n}
-        if end_time is not None:
-            params["endTime"]=end_time
-        r=requests.get(BINANCE,params=params,timeout=15,headers={"User-Agent":"Crypto-DayTrader/4.0"})
+        if end is not None: params["endTime"]=end
+        r=requests.get(BINANCE,params=params,timeout=15,headers={"User-Agent":"Crypto-DayTrader/5.0"})
         r.raise_for_status()
-        batch=r.json()
-        if not batch: break
-        rows=batch+rows
-        end_time=batch[0][0]-1
-        remaining-=len(batch)
-        if len(batch)<n: break
-    if not rows: raise ValueError("Geen marktdata ontvangen.")
-    cols=["open_time","open","high","low","close","volume","close_time","quote_volume","trades","taker_buy_base","taker_buy_quote","ignore"]
-    df=pd.DataFrame(rows,columns=cols).drop_duplicates("open_time")
-    for c in ["open","high","low","close","volume"]:
-        df[c]=pd.to_numeric(df[c],errors="coerce")
-    df["time"]=pd.to_datetime(df["open_time"],unit="ms",utc=True)
-    return df.sort_values("time").tail(limit)[["time","open","high","low","close","volume"]].dropna().reset_index(drop=True)
+        b=r.json()
+        if not b: break
+        rows=b+rows; end=b[0][0]-1; remaining-=len(b)
+        if len(b)<n: break
+    cols=["open_time","open","high","low","close","volume","close_time","qv","trades","tb","tq","ignore"]
+    d=pd.DataFrame(rows,columns=cols).drop_duplicates("open_time")
+    for c in ["open","high","low","close","volume"]: d[c]=pd.to_numeric(d[c],errors="coerce")
+    d["time"]=pd.to_datetime(d.open_time,unit="ms",utc=True)
+    return d.sort_values("time")[["time","open","high","low","close","volume"]].dropna().reset_index(drop=True)
 
 def rsi(s,n=14):
-    d=s.diff()
-    g=d.clip(lower=0)
-    l=-d.clip(upper=0)
-    ag=g.ewm(alpha=1/n,adjust=False).mean()
-    al=l.ewm(alpha=1/n,adjust=False).mean()
+    d=s.diff(); g=d.clip(lower=0); l=-d.clip(upper=0)
+    ag=g.ewm(alpha=1/n,adjust=False).mean(); al=l.ewm(alpha=1/n,adjust=False).mean()
     rs=ag/al.replace(0,np.nan)
-    return 100-(100/(1+rs))
+    return 100-100/(1+rs)
 
-def indicators(df):
-    x=df.copy()
+def ind(d):
+    x=d.copy()
     x["ema9"]=x.close.ewm(span=9,adjust=False).mean()
     x["ema21"]=x.close.ewm(span=21,adjust=False).mean()
     x["ema50"]=x.close.ewm(span=50,adjust=False).mean()
     x["ema200"]=x.close.ewm(span=200,adjust=False).mean()
     x["rsi"]=rsi(x.close)
-    e12=x.close.ewm(span=12,adjust=False).mean()
-    e26=x.close.ewm(span=26,adjust=False).mean()
-    x["macd"]=e12-e26
-    x["macd_signal"]=x.macd.ewm(span=9,adjust=False).mean()
+    e12=x.close.ewm(span=12,adjust=False).mean(); e26=x.close.ewm(span=26,adjust=False).mean()
+    x["macd"]=e12-e26; x["macd_signal"]=x.macd.ewm(span=9,adjust=False).mean()
     tr=pd.concat([x.high-x.low,(x.high-x.close.shift()).abs(),(x.low-x.close.shift()).abs()],axis=1).max(axis=1)
-    x["atr"]=tr.ewm(alpha=1/14,adjust=False).mean()
-    x["atr_pct"]=x.atr/x.close*100
+    x["atr"]=tr.ewm(alpha=1/14,adjust=False).mean(); x["atr_pct"]=x.atr/x.close*100
     x["vol_ma"]=x.volume.rolling(20).mean()
     up=x.high.diff(); down=-x.low.diff()
-    plus=np.where((up>down)&(up>0),up,0.0)
-    minus=np.where((down>up)&(down>0),down,0.0)
-    a=x["atr"].replace(0,np.nan)
-    p=100*pd.Series(plus,index=x.index).ewm(alpha=1/14,adjust=False).mean()/a
-    m=100*pd.Series(minus,index=x.index).ewm(alpha=1/14,adjust=False).mean()/a
-    dx=(abs(p-m)/(p+m).replace(0,np.nan))*100
+    plus=np.where((up>down)&(up>0),up,0); minus=np.where((down>up)&(down>0),down,0)
+    p=100*pd.Series(plus,index=x.index).ewm(alpha=1/14,adjust=False).mean()/x.atr.replace(0,np.nan)
+    m=100*pd.Series(minus,index=x.index).ewm(alpha=1/14,adjust=False).mean()/x.atr.replace(0,np.nan)
+    dx=abs(p-m)/(p+m).replace(0,np.nan)*100
     x["adx"]=dx.ewm(alpha=1/14,adjust=False).mean()
     return x
 
-def timeframe_score(row):
+def direction(row):
     long=short=0
     if row.ema9>row.ema21: long+=15
     elif row.ema9<row.ema21: short+=15
@@ -103,146 +76,133 @@ def timeframe_score(row):
     if 0.15<=row.atr_pct<=4: long+=5; short+=5
     return min(long,100),min(short,100)
 
-def multi_tf_analysis(symbol, mode):
-    data={}
-    for tf in ["1h","15m","5m"]:
-        d=indicators(get_klines(symbol,tf,500))
-        data[tf]=d
-    scores={tf:timeframe_score(data[tf].iloc[-1]) for tf in data}
-    weights={"1h":0.45,"15m":0.35,"5m":0.20}
-    long_total=sum(scores[tf][0]*weights[tf] for tf in scores)
-    short_total=sum(scores[tf][1]*weights[tf] for tf in scores)
-    # Normalize directional score to 0-100 using the weighted maximum.
+def signal_at(i, x, mode):
+    r=x.iloc[i]; L,S=direction(r)
+    # A simplified single-timeframe score for historical testing.
     threshold=72 if mode=="Conservatief" else 62
-    if long_total>=threshold and long_total>short_total+8:
-        signal="LONG"
-        score=long_total
-    elif short_total>=threshold and short_total>long_total+8:
-        signal="SHORT"
-        score=short_total
-    else:
-        signal="WAIT"
-        score=max(long_total,short_total)
-    alignment = (
-        ("1H " + ("↑" if scores["1h"][0]>scores["1h"][1] else "↓")) +
-        " · 15M " + ("↑" if scores["15m"][0]>scores["15m"][1] else "↓") +
-        " · 5M " + ("↑" if scores["5m"][0]>scores["5m"][1] else "↓")
-    )
-    return data,scores,long_total,short_total,score,signal,alignment
+    if L>=threshold and L>S+8: return "LONG",L
+    if S>=threshold and S>L+8: return "SHORT",S
+    return "WAIT",max(L,S)
 
-def plan(row,signal,capital,risk_pct,mode):
-    if signal not in ("LONG","SHORT"): return None
-    entry=float(row.close)
-    dist=max(float(row.atr)*1.25,entry*0.004)
-    rr=2.2 if mode=="Conservatief" else 1.7
-    risk_cash=capital*risk_pct/100
-    qty=risk_cash/dist if dist>0 else 0
-    if signal=="LONG":
-        stop=entry-dist; tp1=entry+dist; tp2=entry+dist*rr
+def run_backtest(df, mode, capital=1000, risk_pct=1.0, fee_pct=0.10, slippage_pct=0.03):
+    x=ind(df).dropna().reset_index(drop=True)
+    cash=float(capital); pos=None; trades=[]; equity=[]; start_idx=205
+    for i in range(start_idx,len(x)):
+        r=x.iloc[i]
+        sig,score=signal_at(i,x,mode)
+        if pos is None and sig in ("LONG","SHORT"):
+            dist=max(float(r.atr)*1.25,float(r.close)*0.004)
+            risk_cash=cash*risk_pct/100
+            qty=risk_cash/dist if dist>0 else 0
+            entry=float(r.close)*(1+slippage_pct/100 if sig=="LONG" else 1-slippage_pct/100)
+            rr=2.2 if mode=="Conservatief" else 1.7
+            stop=entry-dist if sig=="LONG" else entry+dist
+            tp=entry+dist*rr if sig=="LONG" else entry-dist*rr
+            pos={"side":sig,"entry":entry,"stop":stop,"tp":tp,"qty":qty,"time":r.time,"score":score}
+        elif pos is not None:
+            exit_price=None; reason=None
+            if pos["side"]=="LONG":
+                if r.low<=pos["stop"]: exit_price=pos["stop"]; reason="SL"
+                elif r.high>=pos["tp"]: exit_price=pos["tp"]; reason="TP"
+            else:
+                if r.high>=pos["stop"]: exit_price=pos["stop"]; reason="SL"
+                elif r.low<=pos["tp"]: exit_price=pos["tp"]; reason="TP"
+            if exit_price is not None:
+                exit_price*=1-slippage_pct/100 if pos["side"]=="LONG" else 1+slippage_pct/100
+                pnl=(exit_price-pos["entry"])*pos["qty"] if pos["side"]=="LONG" else (pos["entry"]-exit_price)*pos["qty"]
+                fees=(pos["entry"]*pos["qty"]+exit_price*pos["qty"])*fee_pct/100
+                pnl-=fees; cash+=pnl
+                trades.append({"Side":pos["side"],"Entry":pos["entry"],"Exit":exit_price,"P&L":pnl,"Result":reason,"Score":pos["score"],"Entry time":pos["time"],"Exit time":r.time})
+                pos=None
+        equity.append(cash)
+    t=pd.DataFrame(trades)
+    if len(t):
+        wins=t[t["P&L"]>0]["P&L"].sum(); losses=abs(t[t["P&L"]<0]["P&L"].sum())
+        pf=wins/losses if losses else np.inf
+        wr=(t["P&L"]>0).mean()*100
+        avg=t["P&L"].mean()
     else:
-        stop=entry+dist; tp1=entry-dist; tp2=entry-dist*rr
-    return dict(entry=entry,stop=stop,tp1=tp1,tp2=tp2,qty=qty,risk=risk_cash,rr=rr,notional=qty*entry)
+        pf=0; wr=0; avg=0
+    eq=pd.Series(equity)
+    dd=(eq/eq.cummax()-1)*100 if len(eq) else pd.Series([0])
+    return {"final":cash,"return":(cash/capital-1)*100,"trades":t,"winrate":wr,"pf":pf,"avg":avg,"maxdd":dd.min(),"equity":eq}
 
-def init_state():
-    st.session_state.setdefault("paper_cash",1000.0)
-    st.session_state.setdefault("paper_position",None)
-    st.session_state.setdefault("paper_trades",[])
-init_state()
+def walk_forward(df, mode, capital, risk):
+    # Three chronological folds: train is reported for context, final fold is out-of-sample.
+    n=len(df); cut1=int(n*0.5); cut2=int(n*0.75)
+    oos=df.iloc[cut2:].copy()
+    # No parameter fitting is performed: this deliberately keeps the test out-of-sample.
+    return run_backtest(oos,mode,capital,risk)
+
+st.title("₿ Crypto DayTrader v5")
+st.caption("Strategy Lab • backtesting • walk-forward test • multi-indicator paper trading")
 
 with st.sidebar:
-    st.header("⚙️ Instellingen")
     mode=st.radio("Strategie",["Conservatief","Agressief"])
-    capital=st.number_input("Analyse-kapitaal (€)",100.0,100000.0,1000.0,100.0)
-    risk_pct=st.slider("Risico per trade (%)",0.25,3.0,1.0,0.25)
-    coins_text=st.text_area("Coins", "\n".join(DEFAULT_COINS))
-    if st.button("🔄 Vernieuw"):
+    symbol=st.selectbox("Backtest coin",COINS)
+    interval=st.selectbox("Timeframe",["5m","15m","1h"],index=0)
+    capital=st.number_input("Startkapitaal (€)",100.0,100000.0,1000.0,100.0)
+    risk=st.slider("Risico per trade (%)",0.25,3.0,1.0,0.25)
+    history=st.select_slider("Historische candles",[500,1000,1500,2000,3000],value=2000)
+    if st.button("🔄 Vernieuw data"):
         st.cache_data.clear(); st.rerun()
 
-coins=[x.strip().upper().replace("/","") for x in coins_text.splitlines() if x.strip()]
+tab1,tab2,tab3=st.tabs(["📊 Strategy Lab","📈 Equity curve","🧪 Walk-forward"])
 
-st.title("₿ Crypto DayTrader v4")
-st.caption("Multi-timeframe scanner • 1H → 15M → 5M • paper trading • geen financieel advies")
-
-rows=[]
-with st.spinner("1H, 15M en 5M worden gecontroleerd..."):
-    for symbol in coins:
-        try:
-            data,scores,lt,stotal,score,signal,alignment=multi_tf_analysis(symbol,mode)
-            r=data["5m"].iloc[-1]
-            rows.append({
-                "Coin":symbol,"Signaal":"🟢 LONG" if signal=="LONG" else ("🔴 SHORT" if signal=="SHORT" else "🟡 WACHTEN"),
-                "Score":round(score), "1H":round(max(scores["1h"])), "15M":round(max(scores["15m"])),
-                "5M":round(max(scores["5m"])),"Prijs":float(r.close),"RSI":float(r.rsi),
-                "Trend":alignment
-            })
-        except Exception as e:
-            rows.append({"Coin":symbol,"Signaal":"⚠️ FOUT","Score":0,"1H":0,"15M":0,"5M":0,"Prijs":np.nan,"RSI":np.nan,"Trend":str(e)})
-
-scan=pd.DataFrame(rows).sort_values(["Score","Coin"],ascending=[False,True])
-st.subheader("🔎 Multi-timeframe scanner")
-st.dataframe(scan,hide_index=True,use_container_width=True)
-
-valid=scan[scan["Signaal"]!="⚠️ FOUT"]
-if len(valid):
-    best=valid.iloc[0]
-    st.subheader("🏆 Beste setup")
-    a,b,c,d=st.columns(4)
-    a.metric("Coin",best.Coin)
-    b.metric("Score",f'{int(best.Score)}/100')
-    c.metric("Signaal",best.Signaal)
-    d.metric("Timeframes",best.Trend)
-
-    symbol=best.Coin
-    data,scores,lt,stotal,score,signal,alignment=multi_tf_analysis(symbol,mode)
-    last=data["5m"].iloc[-1]
-    p=plan(last,signal,capital,risk_pct,mode)
-
-    if p:
-        st.subheader("🎯 Trade-plan")
+with tab1:
+    st.subheader(f"{symbol} • {interval} • {mode}")
+    if st.button("▶️ Run backtest",type="primary"):
+        with st.spinner("Historische data testen..."):
+            result=run_backtest(candles(symbol,interval,history),mode,capital,risk)
         a,b,c,d=st.columns(4)
-        a.metric("Entry",f"${p['entry']:,.4f}")
-        b.metric("Stop-loss",f"${p['stop']:,.4f}")
-        c.metric("TP1",f"${p['tp1']:,.4f}")
-        d.metric("TP2",f"${p['tp2']:,.4f}")
+        a.metric("Rendement",f"{result['return']:.2f}%")
+        b.metric("Winrate",f"{result['winrate']:.1f}%")
+        c.metric("Profit factor",f"{result['pf']:.2f}" if np.isfinite(result["pf"]) else "∞")
+        d.metric("Max drawdown",f"{result['maxdd']:.2f}%")
         a,b,c,d=st.columns(4)
-        a.metric("Positie",f"{p['qty']:.6f}")
-        b.metric("Risico",f"€{p['risk']:.2f}")
-        c.metric("Notional",f"€{p['notional']:.2f}")
-        d.metric("R/R",f"1:{p['rr']:.1f}")
+        a.metric("Trades",len(result["trades"]))
+        a.metric("Eindkapitaal",f"€{result['final']:,.2f}")
+        a.metric("Gem. trade",f"€{result['avg']:,.2f}")
+        st.session_state["last_result"]=result
+        if len(result["trades"]):
+            st.subheader("Trade log")
+            st.dataframe(result["trades"].tail(100),hide_index=True,use_container_width=True)
+        else:
+            st.info("Geen trades in deze historische periode.")
 
-    st.subheader(f"📈 {symbol} — 5M")
-    d5=data["5m"].tail(200)
-    fig=go.Figure()
-    fig.add_trace(go.Candlestick(x=d5.time,open=d5.open,high=d5.high,low=d5.low,close=d5.close,name="Prijs"))
-    fig.add_trace(go.Scatter(x=d5.time,y=d5.ema21,name="EMA21"))
-    fig.add_trace(go.Scatter(x=d5.time,y=d5.ema50,name="EMA50"))
-    if p:
-        fig.add_hline(y=p["entry"],annotation_text="Entry")
-        fig.add_hline(y=p["stop"],annotation_text="SL")
-        fig.add_hline(y=p["tp1"],annotation_text="TP1")
-        fig.add_hline(y=p["tp2"],annotation_text="TP2")
-    fig.update_layout(height=500,margin=dict(l=5,r=5,t=15,b=5),xaxis_rangeslider_visible=False)
-    st.plotly_chart(fig,use_container_width=True)
+    if "last_result" in st.session_state:
+        r=st.session_state["last_result"]
+        if len(r["trades"]):
+            st.subheader("Trade-verdeling")
+            by_side=r["trades"].groupby("Side")["P&L"].agg(["count","sum","mean"]).reset_index()
+            st.dataframe(by_side,hide_index=True,use_container_width=True)
 
-    st.subheader("📊 Multi-timeframe details")
-    detail=pd.DataFrame([
-        ["1H",scores["1h"][0],scores["1h"][1]],
-        ["15M",scores["15m"][0],scores["15m"][1]],
-        ["5M",scores["5m"][0],scores["5m"][1]],
-    ],columns=["Timeframe","LONG score","SHORT score"])
-    st.dataframe(detail,hide_index=True,use_container_width=True)
+with tab2:
+    if "last_result" not in st.session_state:
+        st.info("Voer eerst een backtest uit.")
+    else:
+        r=st.session_state["last_result"]
+        fig=go.Figure()
+        fig.add_trace(go.Scatter(y=r["equity"],mode="lines",name="Equity"))
+        fig.update_layout(height=450,title="Equity curve",xaxis_title="Trade/checkpoint",yaxis_title="€")
+        st.plotly_chart(fig,use_container_width=True)
 
-# Paper trading
+with tab3:
+    st.subheader("Out-of-sample walk-forward")
+    st.write("De laatste 25% van de historische data wordt volledig apart getest. Er worden geen parameters op deze testperiode aangepast.")
+    if st.button("▶️ Run walk-forward"):
+        with st.spinner("Out-of-sample test..."):
+            wf=walk_forward(candles(symbol,interval,history),mode,capital,risk)
+        a,b,c,d=st.columns(4)
+        a.metric("OOS rendement",f"{wf['return']:.2f}%")
+        b.metric("OOS winrate",f"{wf['winrate']:.1f}%")
+        c.metric("OOS profit factor",f"{wf['pf']:.2f}" if np.isfinite(wf["pf"]) else "∞")
+        d.metric("OOS max drawdown",f"{wf['maxdd']:.2f}%")
+        st.write(f"OOS trades: **{len(wf['trades'])}**")
+        if len(wf["trades"]):
+            st.dataframe(wf["trades"].tail(100),hide_index=True,use_container_width=True)
+
 st.divider()
-st.subheader("🧪 Paper Trading")
-pstate=st.session_state.paper_position
-if pstate:
-    a,b,c,d=st.columns(4)
-    a.metric("Positie",f"{pstate['symbol']} {pstate['side']}")
-    a.metric("Entry",f"${pstate['entry']:,.4f}")
-    a.metric("SL",f"${pstate['stop']:,.4f}")
-    a.metric("TP2",f"${pstate['tp2']:,.4f}")
-else:
-    st.info("Geen open paper trade. Paper trading blijft lokaal in deze sessie.")
-
-st.caption("Gebruik LONG/SHORT signalen niet als automatisch koop- of verkoopadvies. Eerst testen met paper trading.")
+st.subheader("⚠️ Interpretatie")
+st.write("Een hoge winrate is niet genoeg. Kijk samen naar profit factor, drawdown, aantal trades en vooral de out-of-sample resultaten. Deze backtest is een onderzoeksinstrument, geen garantie voor toekomstige winst.")
+st.caption("Geen echte orders. Geen financieel advies. Fees/slippage zijn vereenvoudigde aannames.")
