@@ -11,22 +11,69 @@ st.set_page_config(page_title="Crypto DayTrader v7", page_icon="₿", layout="wi
 BINANCE="https://data-api.binance.vision/api/v3/klines"
 COINS=["BTCUSDT","ETHUSDT","SOLUSDT","XRPUSDT","DOGEUSDT","ADAUSDT","AVAXUSDT","LINKUSDT","LTCUSDT","DOTUSDT"]
 
-@st.cache_data(ttl=60, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner=False)
 def fetch(symbol, interval, limit=3000):
-    rows=[]; end=None; left=min(int(limit),10000)
-    while left:
-        n=min(1000,left); p={"symbol":symbol,"interval":interval,"limit":n}
-        if end is not None:p["endTime"]=end
-        r=requests.get(BINANCE,params=p,timeout=15,headers={"User-Agent":"Crypto-DayTrader/7.0"})
-        r.raise_for_status(); b=r.json()
-        if not b:break
-        rows=b+rows; end=b[0][0]-1; left-=len(b)
-        if len(b)<n:break
+    """Fetch historical Binance candles with pagination + retry/backoff."""
+    import time as _time
+
+    target=min(int(limit),10000)
+    rows=[]
+    end=None
+    attempts=0
+
+    while len(rows)<target and attempts<30:
+        n=min(1000,target-len(rows))
+        params={"symbol":symbol,"interval":interval,"limit":n}
+        if end is not None:
+            params["endTime"]=end
+
+        last_err=None
+        for retry in range(5):
+            try:
+                r=requests.get(
+                    BINANCE,
+                    params=params,
+                    timeout=25,
+                    headers={"User-Agent":"Crypto-DayTrader/7.3"}
+                )
+                if r.status_code in (418,429):
+                    wait=min(8,2**retry)
+                    _time.sleep(wait)
+                    continue
+                r.raise_for_status()
+                b=r.json()
+                last_err=None
+                break
+            except Exception as e:
+                last_err=e
+                _time.sleep(min(5,1.5**retry))
+        else:
+            raise RuntimeError(f"Binance {symbol} {interval}: {last_err}")
+
+        if not b:
+            break
+
+        rows=b+rows
+        end=b[0][0]-1
+        attempts+=1
+
+        if len(b)<n:
+            break
+
+        # Small pause avoids hammering the public API during a 30-day scan.
+        _time.sleep(0.12)
+
+    if not rows:
+        raise RuntimeError(f"Geen Binance-data ontvangen voor {symbol} {interval}")
+
     cols=["open_time","open","high","low","close","volume","close_time","qv","trades","tb","tq","ignore"]
     d=pd.DataFrame(rows,columns=cols).drop_duplicates("open_time")
-    for c in ["open","high","low","close","volume"]:d[c]=pd.to_numeric(d[c],errors="coerce")
+    for c in ["open","high","low","close","volume"]:
+        d[c]=pd.to_numeric(d[c],errors="coerce")
     d["time"]=pd.to_datetime(d.open_time,unit="ms",utc=True)
-    return d.sort_values("time")[["time","open","high","low","close","volume"]].dropna().reset_index(drop=True)
+    d=d.sort_values("time")[["time","open","high","low","close","volume"]].dropna().reset_index(drop=True)
+    return d.tail(target).reset_index(drop=True)
+
 
 def rsi(s,n):
     d=s.diff(); g=d.clip(lower=0); l=-d.clip(upper=0)
@@ -167,7 +214,15 @@ tab1,tab2,tab3=st.tabs(["🔬 Optimizer","🏆 Robustness","📈 Live scanner"])
 
 with tab1:
     st.subheader("Automatische parameterzoeker")
+    st.info("Tip: 30 dagen gebruikt veel historische candles. De downloader werkt met paginering en backoff om Binance rate limits te vermijden.")
     st.write(f"De app test een beperkte grid van strategieën op ongeveer {days} dagen. Daarna wordt de beste kandidaat niet automatisch als winnaar beschouwd: hij moet ook buiten de trainingsperiode overeind blijven.")
+    if st.button("🔌 Test Binance verbinding"):
+        try:
+            test=fetch("BTCUSDT","5m",100)
+            st.success(f"Binance OK — {len(test)} candles ontvangen.")
+        except Exception as e:
+            st.error(f"Binance verbinding mislukt: {e}")
+
     if st.button("🚀 Start optimizer",type="primary"):
         rows=[]
         progress=st.progress(0)
@@ -211,7 +266,12 @@ with tab1:
     out=st.session_state.get("v7opt")
     if out is not None:
         out=out.sort_values(["OOS PF","OOS %"],ascending=False)
-        st.dataframe(out.style.format({c:"{:.2f}" for c in out.columns if c not in ["Coin","FOUT","IS trades","OOS trades","fast","slow","trend","threshold"]}),use_container_width=True,hide_index=True)
+        numeric=[c for c in out.columns if c not in ["Coin","FOUT","IS trades","OOS trades","fast","slow","trend","threshold"]]
+        st.dataframe(out.style.format({c:"{:.2f}" for c in numeric}),use_container_width=True,hide_index=True)
+        if "FOUT" in out.columns:
+            errors=out[out["FOUT"].notna()][["Coin","FOUT"]]
+            if len(errors):
+                st.expander("🔎 Technische fouten").dataframe(errors,use_container_width=True,hide_index=True)
 
 with tab2:
     st.subheader("Robustness / walk-forward")
