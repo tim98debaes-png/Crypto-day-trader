@@ -6,7 +6,7 @@ import streamlit as st
 import plotly.graph_objects as go
 from itertools import product
 
-st.set_page_config(page_title="Crypto DayTrader v7", page_icon="₿", layout="wide")
+st.set_page_config(page_title="Crypto DayTrader v7.3", page_icon="₿", layout="wide")
 
 BINANCE="https://data-api.binance.vision/api/v3/klines"
 COINS=["BTCUSDT","ETHUSDT","SOLUSDT","XRPUSDT","DOGEUSDT","ADAUSDT","AVAXUSDT","LINKUSDT","LTCUSDT","DOTUSDT"]
@@ -94,7 +94,10 @@ def add_ind(d,p):
     x["vol_ma"]=x.volume.rolling(20).mean()
     return x
 
-def make_mtf(symbol,limit,p):
+@st.cache_data(ttl=300, show_spinner=False)
+def make_mtf(symbol,limit,p=None):
+    if p is None:
+        p=PARAMS[0]
     d5=add_ind(fetch(symbol,"5m",limit),p)
     d15=add_ind(fetch(symbol,"15m",max(500,min(3000,limit//3+100))),p)
     d1=add_ind(fetch(symbol,"1h",max(500,min(3000,limit//12+100))),p)
@@ -199,8 +202,8 @@ def quality(r):
     else:pf=r["pf"]
     return pf + min(r["trades"]/100,1)*.15 + r["return"]/100 - abs(r["dd"])/100
 
-st.title("₿ Crypto DayTrader v7")
-st.caption("Strategy Optimizer • 30-day research • in-sample / out-of-sample / walk-forward • anti-overfitting guardrails")
+st.title("₿ Crypto DayTrader v7.3")
+st.caption("Strategy Optimizer v7.3 • 30-day research • in-sample / out-of-sample / walk-forward • anti-overfitting guardrails")
 
 with st.sidebar:
     mode=st.radio("Strategie",["Conservatief","Agressief"])
@@ -230,21 +233,36 @@ with tab1:
         for n,symbol in enumerate(COINS,1):
             status.write(f"Test {symbol} ({n}/{len(COINS)})...")
             try:
-                d=make_mtf(symbol,int(days*24*12))
-                if len(d)<100:
-                    raise RuntimeError(f"Te weinig bruikbare candles: {len(d)}")
-                cut=int(len(d)*.65)
-                train=d.iloc[:cut].reset_index(drop=True)
-                test=d.iloc[cut:].reset_index(drop=True)
+                limit=int(days*24*12)
                 candidates=[]
-                for p in PARAMS:
-                    rr=backtest(train,p,mode,capital,risk,fee,slip)
-                    if rr["trades"]>=20:
-                        candidates.append((quality(rr),p,rr))
+                # Indicator data only needs to be rebuilt for unique indicator settings.
+                # Stop/TP/threshold parameters are evaluated on the same indicator frame.
+                indicator_keys=[]
+                for pp in PARAMS:
+                    key=(pp["fast"],pp["slow"],pp["trend"],pp["rsi"])
+                    if key not in indicator_keys:
+                        indicator_keys.append(key)
+                for key in indicator_keys:
+                    base=dict(PARAMS[0])
+                    base.update({"fast":key[0],"slow":key[1],"trend":key[2],"rsi":key[3]})
+                    d=make_mtf(symbol,limit,base)
+                    if len(d)<100:
+                        continue
+                    cut=int(len(d)*.65)
+                    train=d.iloc[:cut].reset_index(drop=True)
+                    for pp in PARAMS:
+                        if (pp["fast"],pp["slow"],pp["trend"],pp["rsi"]) != key:
+                            continue
+                        rr=backtest(train,pp,mode,capital,risk,fee,slip)
+                        if rr["trades"]>=20:
+                            candidates.append((quality(rr),pp,rr,train))
                 candidates.sort(key=lambda x:x[0],reverse=True)
                 best=candidates[0] if candidates else None
                 if best:
-                    _,p,ins=best
+                    _,p,ins,train=best
+                    d=make_mtf(symbol,limit,p)
+                    cut=int(len(d)*.65)
+                    test=d.iloc[cut:].reset_index(drop=True)
                     oos=backtest(test,p,mode,capital,risk,fee,slip)
                     rows.append({"Coin":symbol,"IS PF":ins["pf"],"IS %":ins["return"],"IS trades":ins["trades"],
                                  "OOS PF":oos["pf"],"OOS %":oos["return"],"OOS trades":oos["trades"],
