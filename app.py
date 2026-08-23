@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 import requests
 import streamlit as st
+from signal_engine import generate_signal
 from validation_engine import (
     make_walk_forward_folds,
     summarize_validation,
@@ -3318,49 +3319,33 @@ with tab4:
                     short_scores[-1]
                 )
 
-                if (
-                    long_value
-                    >= params["threshold"]
-                    and long_value
-                    > short_value
-                    + params["min_edge"]
-                ):
-                    raw_signal = "LONG"
-
-                elif (
-                    short_value
-                    >= params["threshold"]
-                    and short_value
-                    > long_value
-                    + params["min_edge"]
-                ):
-                    raw_signal = "SHORT"
-
-                else:
-                    raw_signal = "WAIT"
-
-                allowed = saved.get(
-                    "Status"
-                ) in {
-                    "ROBUST",
-                    "WATCH",
-                }
-
-                saved_direction = saved.get(
-                    "Direction"
+                candidate = dict(saved)
+                candidate["signal_threshold"] = params.get(
+                    "threshold", 70
+                )
+                candidate["rr"] = params.get(
+                    "rr", 2.0
                 )
 
+                signal_result = generate_signal(
+                    candidate,
+                    {
+                        "long_score": long_value,
+                        "short_score": short_value,
+                        "stop_distance": float(latest.atr)
+                        * float(params.get("sl_atr", 1.5)),
+                        "rr": float(params.get("rr", 2.0)),
+                    },
+                )
+
+                signal = signal_result.action
+
+                saved_direction = saved.get("Direction")
                 if (
-                    allowed
-                    and raw_signal != "WAIT"
-                    and (
-                        not saved_direction
-                        or saved_direction
-                        == raw_signal
-                    )
+                    signal in {"LONG", "SHORT"}
+                    and saved_direction
+                    and saved_direction != signal
                 ):
-                    signal = raw_signal
-                else:
                     signal = "WAIT"
 
                 scan_rows.append(
