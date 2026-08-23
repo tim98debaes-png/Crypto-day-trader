@@ -51,10 +51,16 @@ def test_trailing_stop_does_not_trigger_from_same_candle_high():
     # Signal on candle 0 -> entry at candle 1.
     # Candle 2 reaches the trailing trigger, but also drops below the
     # newly calculated trailing stop. Phase 2 must not use that new stop
-    # to exit inside candle 2.
+    # to exit inside candle 2. The later final price is deliberately below
+    # the original stop so the old implementation would produce a profit,
+    # while the corrected implementation realizes the later loss.
     data.loc[2, "high"] = 103.0
     data.loc[2, "low"] = 100.8
     data.loc[3, "low"] = 100.8
+    data.loc[5, "open"] = 98.0
+    data.loc[5, "high"] = 98.5
+    data.loc[5, "low"] = 97.5
+    data.loc[5, "close"] = 98.0
 
     app.make_signals = lambda _data, _params: (
         np.array([100, 0, 0, 0, 0, 0], dtype=np.int16),
@@ -73,9 +79,8 @@ def test_trailing_stop_does_not_trigger_from_same_candle_high():
         return_pnls=True,
     )
 
-    # The position should remain open through candle 2 rather than being
-    # stopped by a trailing level created from candle 2's own high.
     assert result["trades"] == 1
+    assert result["pnls"][0] < 0
 
 
 def test_end_of_dataset_open_position_is_realized():
