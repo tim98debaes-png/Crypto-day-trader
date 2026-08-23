@@ -14,212 +14,26 @@ jobs:
         with:
           ref: phase-3-validation-engine
 
-      - name: Add validation engine helpers
-        shell: python
-        run: |
-          from pathlib import Path
-          path = Path("app.py")
-          text = path.read_text(encoding="utf-8")
+      - name: Apply Phase 3 patch
+        run: python scripts/apply_phase3_patch.py
 
-          marker = "\n\ndef strategy_discovery(\n"
-          if marker not in text:
-              raise SystemExit("strategy_discovery marker not found; refusing patch")
-
-          block = r'''
-
-
-def make_walk_forward_folds(n, final_oos_fraction=0.20):
-    """Return expanding, chronological train/validation folds.
-
-    The final OOS segment is never included in any fold. Each validation
-    segment starts exactly where its training segment ends, preventing
-    look-ahead and making the WFO terminology accurate.
-    """
-    n = int(n)
-    oos_start = int(n * (1 - final_oos_fraction))
-    available = oos_start
-
-    if available < 200:
-        return []
-
-    # Three expanding folds. Validation blocks are equal-sized and occupy
-    # the latest 45% of the pre-OOS sample; training always starts at zero.
-    validation_size = max(50, int(available * 0.15))
-    first_validation_start = available - validation_size * 3
-
-    if first_validation_start < 100:
-        validation_size = max(30, available // 8)
-        first_validation_start = available - validation_size * 3
-
-    folds = []
-    for index in range(3):
-        valid_start = first_validation_start + index * validation_size
-        valid_end = min(valid_start + validation_size, available)
-        if valid_start <= 0 or valid_end <= valid_start:
-            continue
-        folds.append((0, valid_start, valid_start, valid_end))
-
-    return folds
-
-
-def summarize_validation(results):
-    """Aggregate chronological validation results without inventing data."""
-    if not results:
-        return {
-            "folds": 0,
-            "profitable_folds": 0,
-            "total_trades": 0,
-            "avg_pf": 0.0,
-            "avg_return": 0.0,
-            "worst_dd": 0.0,
-        }
-
-    pfs = [
-        min(float(r.get("pf", 0.0)), 3.0)
-        if np.isfinite(float(r.get("pf", 0.0)))
-        else 3.0
-        for r in results
-    ]
-    returns = [float(r.get("return", 0.0)) for r in results]
-    drawdowns = [float(r.get("dd", 0.0)) for r in results]
-
-    return {
-        "folds": len(results),
-        "profitable_folds": sum(
-            r.get("return", 0.0) > 0 and r.get("pf", 0.0) >= 1.05
-            for r in results
-        ),
-        "total_trades": sum(int(r.get("trades", 0)) for r in results),
-        "avg_pf": float(np.mean(pfs)),
-        "avg_return": float(np.mean(returns)),
-        "worst_dd": float(np.min(drawdowns)),
-    }
-'''
-
-          text = text.replace(marker, block + marker, 1)
-
-          old = '''    validation_ranges = [
-        (
-            int(n * 0.35),
-            int(n * 0.50),
-        ),
-        (
-            int(n * 0.50),
-            int(n * 0.65),
-        ),
-        (
-            int(n * 0.65),
-            int(n * 0.80),
-        ),
-    ]
-
-    final_oos = data.iloc[
-        int(n * 0.80):
-    ].reset_index(drop=True)
-'''
-
-          new = '''    validation_folds = make_walk_forward_folds(n)
-
-    final_oos_start = int(n * 0.80)
-    final_oos = data.iloc[
-        final_oos_start:
-    ].reset_index(drop=True)
-'''
-
-          if old not in text:
-              raise SystemExit("strategy_discovery validation block not found; refusing patch")
-          text = text.replace(old, new, 1)
-
-          old_loop = '''            for start, end in validation_ranges:
-                subset = data.iloc[
-                    start:end
-                ].reset_index(drop=True)
-
-                result = run_backtest(
-                    subset,
-                    params,
-                    mode,
-                    capital,
-                    risk,
-                    fee,
-                    slip,
-                    direction,
-                )
-
-                folds.append(
-                    result
-                )
-'''
-
-          new_loop = '''            for _train_start, _train_end, valid_start, valid_end in validation_folds:
-                subset = data.iloc[
-                    valid_start:valid_end
-                ].reset_index(drop=True)
-
-                result = run_backtest(
-                    subset,
-                    params,
-                    mode,
-                    capital,
-                    risk,
-                    fee,
-                    slip,
-                    direction,
-                )
-
-                folds.append(result)
-'''
-
-          if old_loop not in text:
-              raise SystemExit("candidate validation loop not found; refusing patch")
-          text = text.replace(old_loop, new_loop, 1)
-
-          # Replace stability's hard-coded validation windows with the same
-          # chronological fold definition, keeping the OOS segment isolated.
-          old_stability = '''    validation_ranges = [
-        (
-            int(n * 0.35),
-            int(n * 0.50),
-        ),
-        (
-            int(n * 0.50),
-            int(n * 0.65),
-        ),
-        (
-            int(n * 0.65),
-            int(n * 0.80),
-        ),
-    ]
-'''
-          new_stability = '''    validation_folds = make_walk_forward_folds(n)
-'''
-          if old_stability not in text:
-              raise SystemExit("stability validation block not found; refusing patch")
-          text = text.replace(old_stability, new_stability, 1)
-
-          old_stability_loop = '''        for start, end in validation_ranges:
-            subset = data.iloc[
-                start:end
-            ].reset_index(drop=True)
-'''
-          new_stability_loop = '''        for _train_start, _train_end, valid_start, valid_end in validation_folds:
-            subset = data.iloc[
-                valid_start:valid_end
-            ].reset_index(drop=True)
-'''
-          if old_stability_loop not in text:
-              raise SystemExit("stability validation loop not found; refusing patch")
-          text = text.replace(old_stability_loop, new_stability_loop, 1)
-
-          path.write_text(text, encoding="utf-8")
+      - name: Install dependencies
+        run: pip install -r requirements.txt
 
       - name: Compile
         run: python -m py_compile app.py
+
+      - name: Run Phase 3 tests
+        run: python -m pytest -q tests/test_phase3_validation.py
 
       - name: Commit patch
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add app.py .github/workflows/phase3-validation-patch.yml tests/test_phase3_validation.py
-          git commit -m "Phase 3: harden walk-forward validation"
-          git push origin HEAD:phase-3-validation-engine
+          git add app.py scripts/apply_phase3_patch.py tests/test_phase3_validation.py .github/workflows/phase3-validation-patch.yml
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Phase 3: harden walk-forward validation"
+            git push origin HEAD:phase-3-validation-engine
+          fi
