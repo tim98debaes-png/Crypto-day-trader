@@ -26,7 +26,7 @@ import streamlit as st
 # - No live orders
 # ============================================================
 
-APP_VERSION = "8.4.4"
+APP_VERSION = "8.5.0"
 BINANCE = "https://data-api.binance.vision/api/v3/klines"
 
 COINS = [
@@ -42,7 +42,7 @@ COINS = [
     "DOTUSDT",
 ]
 
-RESULTS_FILE = "optimizer_results_v844.json"
+RESULTS_FILE = "optimizer_results_v850.json"
 
 st.set_page_config(
     page_title=f"Crypto DayTrader v{APP_VERSION}",
@@ -89,7 +89,7 @@ def save_store(store):
     os.replace(tmp, RESULTS_FILE)
 
 
-def make_config(days, mode, capital, risk, fee, slip):
+def make_config(days, mode, capital, risk, fee, slip, optimizer_mode="Volledig"):
     return {
         "days": int(days),
         "mode": str(mode),
@@ -97,7 +97,7 @@ def make_config(days, mode, capital, risk, fee, slip):
         "risk": float(risk),
         "fee": float(fee),
         "slip": float(slip),
-        "optimizer_mode": "Volledig",
+        "optimizer_mode": str(optimizer_mode),
     }
 
 
@@ -2203,6 +2203,12 @@ def strategy_discovery(
 
     candidates = []
 
+    strategy_pool = (
+        STRATEGIES
+        if optimizer_mode == "Volledig"
+        else fast_strategy_pool()
+    )
+
     for base in strategy_pool:
         for direction in [
             "LONG",
@@ -2472,6 +2478,7 @@ def strategy_discovery(
         "RR": params["rr"],
         "threshold": params["threshold"],
         "max bars": params["max_bars"],
+        "Strategy Params": dict(params),
     }
 
 
@@ -2582,6 +2589,9 @@ def optimize_coin(
         "max bars": row.get(
             "max bars"
         ),
+        "Strategy Params": row.get(
+            "Strategy Params"
+        ),
     }
 
 
@@ -2672,8 +2682,8 @@ current_config = make_config(
     risk,
     fee,
     slip,
+    optimizer_mode,
 )
-current_config["optimizer_mode"] = optimizer_mode
 
 store = load_store()
 
@@ -2996,6 +3006,7 @@ with tab2:
                         risk,
                         fee,
                         slip,
+                        optimizer_mode,
                     )
                 )
 
@@ -3217,56 +3228,33 @@ with tab4:
                     )
                 )
 
+                params = saved.get("Strategy Params")
+
+                if not isinstance(params, dict):
+                    scan_rows.append(
+                        {
+                            "Coin": symbol,
+                            "Signal": "WAIT",
+                            "Strategy": saved.get("Strategy", "-"),
+                            "Long": 0,
+                            "Short": 0,
+                            "Reason": "Geen volledige geoptimaliseerde parameters opgeslagen; opnieuw optimaliseren vereist.",
+                        }
+                    )
+                    continue
+
+                params = dict(params)
                 family = str(
-                    saved.get(
-                        "Strategy",
-                        "TREND",
+                    params.get(
+                        "family",
+                        saved.get("Strategy", "TREND"),
                     )
                 ).lower()
-
-                params = {
-                    "family": family,
-                    "direction": saved.get(
-                        "Direction",
-                        "LONG",
-                    ),
-                    "rsi_min": 52,
-                    "rsi_max": 68,
-                    "adx_min": 18,
-                    "adx_htf": 18,
-                    "vol_min": 1.0,
-                    "vol_regime_min": 0.55,
-                    "vol_regime_max": 2.8,
-                    "slope_min": 0.02,
-                    "sl_atr": float(
-                        saved.get(
-                            "SL ATR",
-                            1.5,
-                        )
-                    ),
-                    "rr": float(
-                        saved.get(
-                            "RR",
-                            2.0,
-                        )
-                    ),
-                    "threshold": int(
-                        saved.get(
-                            "threshold",
-                            70,
-                        )
-                    ),
-                    "min_edge": 5,
-                    "max_bars": int(
-                        saved.get(
-                            "max bars",
-                            48,
-                        )
-                    ),
-                    "min_stop_pct": 0.35,
-                    "trail_atr": 1.0,
-                    "trail_trigger_r": 1.0,
-                }
+                params["family"] = family
+                params["direction"] = saved.get(
+                    "Direction",
+                    params.get("direction", "LONG"),
+                )
 
                 data = build_mtf(
                     symbol,
