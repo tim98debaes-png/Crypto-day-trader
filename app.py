@@ -1322,63 +1322,64 @@ def run_backtest(
             age += 1
             exit_price = None
 
+            # Conservative intrabar handling:
+            # evaluate the stop/target active at the candle open first.
+            # A trailing stop is updated only after the candle survives,
+            # so the current candle's high/low cannot retroactively move
+            # the stop and then trigger it in the same candle.
+            active_stop = stop
+
             if position == 1:
-                best = max(
-                    best,
-                    high[i],
-                )
-
-                if (
-                    best - entry
-                    >= risk_distance
-                    * params.get(
-                        "trail_trigger_r",
-                        1.0,
-                    )
-                ):
-                    stop = max(
-                        stop,
-                        best
-                        - atr[i]
-                        * params.get(
-                            "trail_atr",
-                            1.0,
-                        ),
-                    )
-
-                if low[i] <= stop:
-                    exit_price = stop
+                if low[i] <= active_stop:
+                    exit_price = active_stop
                 elif high[i] >= target:
                     exit_price = target
 
-            else:
-                best = min(
-                    best,
-                    low[i],
-                )
-
-                if (
-                    entry - best
-                    >= risk_distance
-                    * params.get(
-                        "trail_trigger_r",
-                        1.0,
-                    )
-                ):
-                    stop = min(
-                        stop,
-                        best
-                        + atr[i]
+                if exit_price is None:
+                    best = max(best, high[i])
+                    if (
+                        best - entry
+                        >= risk_distance
                         * params.get(
-                            "trail_atr",
+                            "trail_trigger_r",
                             1.0,
-                        ),
-                    )
+                        )
+                    ):
+                        stop = max(
+                            stop,
+                            best
+                            - atr[i]
+                            * params.get(
+                                "trail_atr",
+                                1.0,
+                            ),
+                        )
 
-                if high[i] >= stop:
-                    exit_price = stop
+            else:
+                if high[i] >= active_stop:
+                    exit_price = active_stop
                 elif low[i] <= target:
                     exit_price = target
+
+                if exit_price is None:
+                    best = min(best, low[i])
+                    if (
+                        entry - best
+                        >= risk_distance
+                        * params.get(
+                            "trail_trigger_r",
+                            1.0,
+                        )
+                    ):
+                        stop = min(
+                            stop,
+                            best
+                            + atr[i]
+                            * params.get(
+                                "trail_atr",
+                                1.0,
+                            ),
+                        )
 
             if (
                 exit_price is None
