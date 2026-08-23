@@ -211,6 +211,15 @@ def fetch(symbol, interval, limit):
         utc=True,
     )
 
+    # Never feed an unfinished Binance candle into research/backtests.
+    # The candle is considered closed only after close_time has passed.
+    now_ms = int(time.time() * 1000)
+    data["close_time"] = pd.to_numeric(
+        data["close_time"],
+        errors="coerce",
+    )
+    data = data[data["close_time"] <= now_ms]
+
     return (
         data.sort_values("time")
         [
