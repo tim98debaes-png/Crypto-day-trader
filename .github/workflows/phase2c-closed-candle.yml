@@ -1,6 +1,9 @@
 name: Phase 2c closed-candle patch
 
 on:
+  push:
+    branches:
+      - phase-2-backtest-audit
   workflow_dispatch:
 
 jobs:
@@ -26,18 +29,25 @@ jobs:
 
           new = '''    data["time"] = pd.to_datetime(\n        data["open_time"],\n        unit="ms",\n        utc=True,\n    )\n\n    # Never feed an unfinished Binance candle into research/backtests.\n    # The candle is considered closed only after close_time has passed.\n    now_ms = int(time.time() * 1000)\n    data["close_time"] = pd.to_numeric(\n        data["close_time"],\n        errors="coerce",\n    )\n    data = data[data["close_time"] <= now_ms]\n\n    return (\n        data.sort_values("time")\n'''
 
-          if old not in text:
+          if old in text:
+              path.write_text(text.replace(old, new, 1), encoding="utf-8")
+          elif "Never feed an unfinished Binance candle" in text:
+              print("Closed-candle protection already present; nothing to patch.")
+          else:
               raise SystemExit("Expected fetch() block not found; refusing to patch")
-
-          path.write_text(text.replace(old, new, 1), encoding="utf-8")
 
       - name: Compile
         run: python -m py_compile app.py
 
-      - name: Commit patch
+      - name: Commit patch and remove temporary workflow
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add app.py
+          git add app.py .github/workflows/phase2c-closed-candle.yml
+          if git diff --cached --quiet; then
+            echo "No changes needed."
+            exit 0
+          fi
+          git rm .github/workflows/phase2c-closed-candle.yml
           git commit -m "Phase 2: exclude incomplete market candles"
           git push origin HEAD:phase-2-backtest-audit
