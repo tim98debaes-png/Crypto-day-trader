@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from validation_engine import (
     assert_no_oos_leakage,
     make_walk_forward_folds,
@@ -49,3 +51,11 @@ def test_validation_summary_and_score_reward_consistency():
     assert summary["profitable_ratio"] == 1.0
     assert summary["total_trades"] == 55
     assert validation_score(summary) > 70.0
+
+
+def test_optimizer_is_wired_to_shared_validation_engine():
+    app_source = Path("app.py").read_text(encoding="utf-8")
+    assert "from validation_engine import (" in app_source
+    assert "validation_folds = make_walk_forward_folds(n)" in app_source
+    assert "score = validation_score(" in app_source
+    assert "for _train_start, _train_end, valid_start, valid_end in validation_folds:" in app_source
