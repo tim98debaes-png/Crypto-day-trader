@@ -211,6 +211,15 @@ def fetch(symbol, interval, limit):
         utc=True,
     )
 
+    # Never feed an unfinished Binance candle into research/backtests.
+    # The candle is considered closed only after close_time has passed.
+    now_ms = int(time.time() * 1000)
+    data["close_time"] = pd.to_numeric(
+        data["close_time"],
+        errors="coerce",
+    )
+    data = data[data["close_time"] <= now_ms]
+
     return (
         data.sort_values("time")
         [
@@ -1322,63 +1331,64 @@ def run_backtest(
             age += 1
             exit_price = None
 
+            # Conservative intrabar handling:
+            # evaluate the stop/target active at the candle open first.
+            # A trailing stop is updated only after the candle survives,
+            # so the current candle's high/low cannot retroactively move
+            # the stop and then trigger it in the same candle.
+            active_stop = stop
+
             if position == 1:
-                best = max(
-                    best,
-                    high[i],
-                )
-
-                if (
-                    best - entry
-                    >= risk_distance
-                    * params.get(
-                        "trail_trigger_r",
-                        1.0,
-                    )
-                ):
-                    stop = max(
-                        stop,
-                        best
-                        - atr[i]
-                        * params.get(
-                            "trail_atr",
-                            1.0,
-                        ),
-                    )
-
-                if low[i] <= stop:
-                    exit_price = stop
+                if low[i] <= active_stop:
+                    exit_price = active_stop
                 elif high[i] >= target:
                     exit_price = target
 
-            else:
-                best = min(
-                    best,
-                    low[i],
-                )
-
-                if (
-                    entry - best
-                    >= risk_distance
-                    * params.get(
-                        "trail_trigger_r",
-                        1.0,
-                    )
-                ):
-                    stop = min(
-                        stop,
-                        best
-                        + atr[i]
+                if exit_price is None:
+                    best = max(best, high[i])
+                    if (
+                        best - entry
+                        >= risk_distance
                         * params.get(
-                            "trail_atr",
+                            "trail_trigger_r",
                             1.0,
-                        ),
-                    )
+                        )
+                    ):
+                        stop = max(
+                            stop,
+                            best
+                            - atr[i]
+                            * params.get(
+                                "trail_atr",
+                                1.0,
+                            ),
+                        )
 
-                if high[i] >= stop:
-                    exit_price = stop
+            else:
+                if high[i] >= active_stop:
+                    exit_price = active_stop
                 elif low[i] <= target:
                     exit_price = target
+
+                if exit_price is None:
+                    best = min(best, low[i])
+                    if (
+                        entry - best
+                        >= risk_distance
+                        * params.get(
+                            "trail_trigger_r",
+                            1.0,
+                        )
+                    ):
+                        stop = min(
+                            stop,
+                            best
+                            + atr[i]
+                            * params.get(
+                                "trail_atr",
+                                1.0,
+                            ),
+                        )
 
             if (
                 exit_price is None
@@ -1481,7 +1491,50 @@ def run_backtest(
                 age = 0
 
         if len(equity):
-            equity[i] = cash
+            if position == 0:
+                equity[i] = cash
+            else:
+                if position == 1:
+                    mark_price = close[i] * (1 - slip / 100)
+                    unrealized = (mark_price - entry) * quantity
+                else:
+                    mark_price = close[i] * (1 + slip / 100)
+                    unrealized = (entry - mark_price) * quantity
+
+                estimated_exit_fees = (
+                    entry * quantity
+                    + mark_price * quantity
+                ) * fee / 100
+
+                equity[i] = (
+                    cash
+                    + unrealized
+                    - estimated_exit_fees
+                )
+
+    # Force-close any position that is still open at the end of the
+    # test period. Leaving it unrealized makes final return and trade
+    # count depend on the arbitrary dataset boundary.
+    if position != 0 and len(data):
+        final_price = close[-1]
+
+        if position == 1:
+            execution_exit = final_price * (1 - slip / 100)
+            gross = (execution_exit - entry) * quantity
+        else:
+            execution_exit = final_price * (1 + slip / 100)
+            gross = (entry - execution_exit) * quantity
+
+        fees = (
+            entry * quantity
+            + execution_exit * quantity
+        ) * fee / 100
+
+        pnl = gross - fees
+        cash += pnl
+        pnls.append(float(pnl))
+        position = 0
+        equity[-1] = cash
 
     result = calculate_metrics(
         pnls,
