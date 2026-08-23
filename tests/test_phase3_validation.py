@@ -9,11 +9,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 app = importlib.import_module("app")
 
 
+# Phase 3 validation-engine regression suite.
+
+
 def test_validation_windows_are_strictly_forward_only():
     n = 1000
-    # Phase 3 target convention: three expanding training windows followed
-    # by immediately subsequent validation windows, with the final 20% held
-    # out completely for OOS.
     final_oos_start = int(n * 0.80)
     folds = app.make_walk_forward_folds(n)
 
