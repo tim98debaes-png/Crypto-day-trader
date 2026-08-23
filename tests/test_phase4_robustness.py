@@ -1,8 +1,15 @@
+from math import isclose
+
 from robustness_engine import max_drawdown, monte_carlo, robustness_score
 
 
 def test_max_drawdown_uses_peak_to_trough():
-    assert max_drawdown([100, 120, 90, 110, 80]) == -33.33333333333333
+    assert isclose(
+        max_drawdown([100, 120, 90, 110, 80]),
+        -33.33333333333333,
+        rel_tol=0,
+        abs_tol=1e-12,
+    )
 
 
 def test_monte_carlo_is_deterministic_with_seed():
