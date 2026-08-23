@@ -1,0 +1,33 @@
+name: Apply Phase 1 patch
+
+on:
+  push:
+    branches:
+      - phase-1-fixes-work
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: ${{ !contains(github.event.head_commit.message || '', '[phase1-applied]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Apply patch
+        run: python phase1_apply.py
+
+      - name: Validate Python syntax
+        run: python -m py_compile app.py
+
+      - name: Commit Phase 1 changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app.py
+          git rm phase1_apply.py .github/workflows/apply-phase1.yml phase1_trigger.txt || true
+          git commit -m "Phase 1: unify optimizer and scanner parameters [phase1-applied]"
+          git push origin HEAD:phase-1-fixes-work
