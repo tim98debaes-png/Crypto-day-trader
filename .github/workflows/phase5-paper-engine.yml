@@ -22,10 +22,10 @@ jobs:
         run: pip install -r requirements.txt pytest
 
       - name: Compile
-        run: python -m py_compile app.py validation_engine.py robustness_engine.py paper_engine.py paper_router.py paper_execution.py
+        run: python -m py_compile app.py validation_engine.py robustness_engine.py paper_engine.py paper_router.py paper_execution.py market_feed.py paper_runner.py
 
       - name: Phase 5 tests
-        run: pytest -q tests/test_phase5_paper_engine.py tests/test_phase5_router.py tests/test_phase5_execution.py
+        run: pytest -q tests/test_phase5_paper_engine.py tests/test_phase5_router.py tests/test_phase5_execution.py tests/test_market_feed.py
 
       - name: Phase 4 tests
         run: pytest -q tests/test_phase4_robustness.py
