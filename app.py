@@ -7,6 +7,11 @@ import numpy as np
 import pandas as pd
 import requests
 import streamlit as st
+from validation_engine import (
+    make_walk_forward_folds,
+    summarize_validation,
+    validation_score,
+)
 
 
 # ============================================================
@@ -1900,27 +1905,14 @@ def strategy_stability(
 
     n = len(data)
 
-    validation_ranges = [
-        (
-            int(n * 0.35),
-            int(n * 0.50),
-        ),
-        (
-            int(n * 0.50),
-            int(n * 0.65),
-        ),
-        (
-            int(n * 0.65),
-            int(n * 0.80),
-        ),
-    ]
+    validation_folds = make_walk_forward_folds(n)
 
     for variant in variants:
         fold_results = []
 
-        for start, end in validation_ranges:
+        for _train_start, _train_end, valid_start, valid_end in validation_folds:
             subset = data.iloc[
-                start:end
+                valid_start:valid_end
             ].reset_index(drop=True)
 
             result = run_backtest(
@@ -2235,23 +2227,17 @@ def strategy_discovery(
 
     n = len(data)
 
-    validation_ranges = [
-        (
-            int(n * 0.35),
-            int(n * 0.50),
-        ),
-        (
-            int(n * 0.50),
-            int(n * 0.65),
-        ),
-        (
-            int(n * 0.65),
-            int(n * 0.80),
-        ),
-    ]
+    validation_folds = make_walk_forward_folds(n)
+    if not validation_folds:
+        return {
+            "Coin": symbol,
+            "Status": "NO DATA",
+            "Reason": "Te weinig data voor walk-forward validatie",
+        }
 
+    final_oos_start = int(n * 0.80)
     final_oos = data.iloc[
-        int(n * 0.80):
+        final_oos_start:
     ].reset_index(drop=True)
 
     candidates = []
@@ -2272,9 +2258,9 @@ def strategy_discovery(
 
             folds = []
 
-            for start, end in validation_ranges:
+            for _train_start, _train_end, valid_start, valid_end in validation_folds:
                 subset = data.iloc[
-                    start:end
+                    valid_start:valid_end
                 ].reset_index(drop=True)
 
                 result = run_backtest(
@@ -2288,9 +2274,7 @@ def strategy_discovery(
                     direction,
                 )
 
-                folds.append(
-                    result
-                )
+                folds.append(result)
 
             total_trades = sum(
                 result["trades"]
@@ -2300,8 +2284,11 @@ def strategy_discovery(
             if total_trades < 15:
                 continue
 
-            score = discovery_score(
+            validation_summary = summarize_validation(
                 folds
+            )
+            score = validation_score(
+                validation_summary
             )
 
             candidates.append(
