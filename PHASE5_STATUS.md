@@ -2,7 +2,7 @@
 
 ## Paper trading engine
 
-Phase 5 starts the execution-simulation layer without enabling live orders.
+Phase 5 provides the execution-simulation layer without enabling live exchange orders.
 
 Implemented:
 - deterministic LONG/SHORT paper positions;
@@ -12,8 +12,14 @@ Implemented:
 - daily loss guard;
 - position state and equity snapshots;
 - open/close audit log;
+- optimizer-to-paper candidate gate using the real optimizer OOS/MC output schema;
+- strategy signal routing into the paper execution loop;
 - regression tests and CI workflow.
 
-Next integration step: connect the validated optimizer output to this paper account so only candidates that pass the Phase 4 robustness gates can generate paper-trading entries.
+The paper gate requires TRADE status, positive OOS return and profit factor, sufficient OOS trades, bounded OOS drawdown, and the Phase 4 robustness/probability thresholds. Legacy normalized test fields remain supported.
 
 Live exchange order placement remains disabled.
+
+## Phase 5 completion gate
+
+Phase 5 is considered complete when the dedicated workflow is green for paper-engine, router, execution, market-feed, signal, strategy-runner, Phase 4 robustness, and Phase 3 regression tests.
