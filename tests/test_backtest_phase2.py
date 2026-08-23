@@ -53,18 +53,13 @@ def params(**overrides):
 def test_trailing_stop_does_not_trigger_from_same_candle_high():
     data = make_data(6)
     # Signal on candle 0 -> entry at candle 1.
-    # Candle 2 reaches the trailing trigger, but also drops below the
-    # newly calculated trailing stop. Phase 2 must not use that new stop
-    # to exit inside candle 2. The later final price is deliberately below
-    # the original stop so the old implementation would produce a profit,
-    # while the corrected implementation realizes the later loss.
-    data.loc[2, "high"] = 103.0
-    data.loc[2, "low"] = 100.8
-    data.loc[3, "low"] = 100.8
-    data.loc[5, "open"] = 98.0
-    data.loc[5, "high"] = 98.5
-    data.loc[5, "low"] = 97.5
-    data.loc[5, "close"] = 98.0
+    # Candle 2 reaches the trailing trigger and trades below the newly
+    # calculated trailing stop. The new stop must not be usable inside
+    # candle 2. max_bars=1 then forces the corrected implementation to
+    # exit at candle 2 close instead of at the newly created stop.
+    data.loc[2, "high"] = 101.5
+    data.loc[2, "low"] = 100.4
+    data.loc[2, "close"] = 100.0
 
     app.make_signals = lambda _data, _params: (
         np.array([100, 0, 0, 0, 0, 0], dtype=np.int16),
@@ -73,7 +68,7 @@ def test_trailing_stop_does_not_trigger_from_same_candle_high():
 
     result = app.run_backtest(
         data,
-        params(),
+        params(rr=10.0, max_bars=1),
         "Normaal",
         1000.0,
         1.0,
@@ -84,6 +79,9 @@ def test_trailing_stop_does_not_trigger_from_same_candle_high():
     )
 
     assert result["trades"] == 1
+    # The old same-candle trailing implementation would exit around 100.5
+    # and realize a profit. The corrected implementation exits at close=100
+    # and therefore realizes only the trading costs.
     assert result["pnls"][0] < 0
 
 
@@ -125,8 +123,11 @@ def test_long_and_short_stop_handling_is_symmetric():
 
     signal = np.array([100, 0, 0, 0, 0, 0], dtype=np.int16)
     zero = np.zeros(6, dtype=np.int16)
-    app.make_signals = lambda _data, _params: (signal, zero)
 
+    long_signals = lambda _data, _params: (signal, zero)
+    short_signals = lambda _data, _params: (zero, signal)
+
+    app.make_signals = long_signals
     long_result = app.run_backtest(
         long_data,
         params(rr=10.0, trail_trigger_r=10.0),
@@ -138,6 +139,8 @@ def test_long_and_short_stop_handling_is_symmetric():
         "LONG",
         return_pnls=True,
     )
+
+    app.make_signals = short_signals
     short_result = app.run_backtest(
         short_data,
         params(rr=10.0, trail_trigger_r=10.0),
