@@ -5,8 +5,8 @@ text = path.read_text(encoding="utf-8")
 
 # Use one canonical validation implementation shared by the optimizer and tests.
 import_marker = "import streamlit as st\n"
-import_line = "from validation_engine import make_walk_forward_folds, summarize_validation\n"
-if import_line not in text:
+import_line = "from validation_engine import (\n    make_walk_forward_folds,\n    summarize_validation,\n    validation_score,\n)\n"
+if "from validation_engine import (" not in text:
     if import_marker not in text:
         raise SystemExit("streamlit import marker not found")
     text = text.replace(import_marker, import_marker + import_line, 1)
@@ -95,6 +95,20 @@ new_loop = '''            for _train_start, _train_end, valid_start, valid_end i
 if old_loop in text:
     text = text.replace(old_loop, new_loop, 1)
 
+old_score = '''            score = discovery_score(
+                folds
+            )
+'''
+new_score = '''            validation_summary = summarize_validation(
+                folds
+            )
+            score = validation_score(
+                validation_summary
+            )
+'''
+if old_score in text:
+    text = text.replace(old_score, new_score, 1)
+
 old_stability = '''    validation_ranges = [
         (
             int(n * 0.35),
@@ -128,11 +142,11 @@ new_stability_loop = '''        for _train_start, _train_end, valid_start, valid
 if old_stability_loop in text:
     text = text.replace(old_stability_loop, new_stability_loop, 1)
 
-# Fail the patch if the critical optimizer integration did not occur.
 required = [
-    "from validation_engine import make_walk_forward_folds, summarize_validation",
+    "from validation_engine import (",
     "validation_folds = make_walk_forward_folds(n)",
     "for _train_start, _train_end, valid_start, valid_end in validation_folds:",
+    "score = validation_score(",
 ]
 missing = [item for item in required if item not in text]
 if missing:
