@@ -1482,7 +1482,50 @@ def run_backtest(
                 age = 0
 
         if len(equity):
-            equity[i] = cash
+            if position == 0:
+                equity[i] = cash
+            else:
+                if position == 1:
+                    mark_price = close[i] * (1 - slip / 100)
+                    unrealized = (mark_price - entry) * quantity
+                else:
+                    mark_price = close[i] * (1 + slip / 100)
+                    unrealized = (entry - mark_price) * quantity
+
+                estimated_exit_fees = (
+                    entry * quantity
+                    + mark_price * quantity
+                ) * fee / 100
+
+                equity[i] = (
+                    cash
+                    + unrealized
+                    - estimated_exit_fees
+                )
+
+    # Force-close any position that is still open at the end of the
+    # test period. Leaving it unrealized makes final return and trade
+    # count depend on the arbitrary dataset boundary.
+    if position != 0 and len(data):
+        final_price = close[-1]
+
+        if position == 1:
+            execution_exit = final_price * (1 - slip / 100)
+            gross = (execution_exit - entry) * quantity
+        else:
+            execution_exit = final_price * (1 + slip / 100)
+            gross = (entry - execution_exit) * quantity
+
+        fees = (
+            entry * quantity
+            + execution_exit * quantity
+        ) * fee / 100
+
+        pnl = gross - fees
+        cash += pnl
+        pnls.append(float(pnl))
+        position = 0
+        equity[-1] = cash
 
     result = calculate_metrics(
         pnls,
