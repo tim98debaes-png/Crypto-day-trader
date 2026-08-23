@@ -3,80 +3,21 @@ from pathlib import Path
 path = Path("app.py")
 text = path.read_text(encoding="utf-8")
 
-marker = "\n\ndef strategy_discovery(\n"
-if marker not in text:
-    raise SystemExit("strategy_discovery marker not found")
+# Use one canonical validation implementation shared by the optimizer and tests.
+import_marker = "import streamlit as st\n"
+import_line = "from validation_engine import make_walk_forward_folds, summarize_validation\n"
+if import_line not in text:
+    if import_marker not in text:
+        raise SystemExit("streamlit import marker not found")
+    text = text.replace(import_marker, import_marker + import_line, 1)
 
-helper = r'''
-
-def make_walk_forward_folds(n, final_oos_fraction=0.20):
-    """Return expanding chronological train/validation folds."""
-    n = int(n)
-    if n <= 0:
-        return []
-
-    oos_start = int(n * (1 - final_oos_fraction))
-    if oos_start < 200:
-        return []
-
-    validation_size = max(50, int(oos_start * 0.15))
-    first_validation_start = oos_start - validation_size * 3
-
-    if first_validation_start < 100:
-        validation_size = max(30, oos_start // 8)
-        first_validation_start = oos_start - validation_size * 3
-
-    if first_validation_start < 100:
-        return []
-
-    folds = []
-    for index in range(3):
-        valid_start = first_validation_start + index * validation_size
-        valid_end = min(valid_start + validation_size, oos_start)
-        if valid_start <= 0 or valid_end <= valid_start:
-            continue
-        folds.append((0, valid_start, valid_start, valid_end))
-
-    return folds
-
-
-def summarize_validation(results):
-    """Aggregate chronological validation results."""
-    if not results:
-        return {
-            "folds": 0,
-            "profitable_folds": 0,
-            "total_trades": 0,
-            "avg_pf": 0.0,
-            "avg_return": 0.0,
-            "worst_dd": 0.0,
-        }
-
-    pfs = [
-        min(float(r.get("pf", 0.0)), 3.0)
-        if np.isfinite(float(r.get("pf", 0.0)))
-        else 3.0
-        for r in results
-    ]
-    returns = [float(r.get("return", 0.0)) for r in results]
-    drawdowns = [float(r.get("dd", 0.0)) for r in results]
-
-    return {
-        "folds": len(results),
-        "profitable_folds": sum(
-            r.get("return", 0.0) > 0
-            and r.get("pf", 0.0) >= 1.05
-            for r in results
-        ),
-        "total_trades": sum(int(r.get("trades", 0)) for r in results),
-        "avg_pf": float(np.mean(pfs)),
-        "avg_return": float(np.mean(returns)),
-        "worst_dd": float(np.min(drawdowns)),
-    }
-'''
-
-if "def make_walk_forward_folds(" not in text:
-    text = text.replace(marker, helper + marker, 1)
+# Remove the temporary in-app helper implementation if an earlier patch inserted it.
+helper_start = "\ndef make_walk_forward_folds(n, final_oos_fraction=0.20):\n"
+strategy_marker = "\n\ndef strategy_discovery(\n"
+if helper_start in text and strategy_marker in text:
+    start = text.index(helper_start)
+    end = text.index(strategy_marker, start)
+    text = text[:start] + "\n" + text[end:]
 
 old = '''    validation_ranges = [
         (
@@ -98,6 +39,12 @@ old = '''    validation_ranges = [
     ].reset_index(drop=True)
 '''
 new = '''    validation_folds = make_walk_forward_folds(n)
+    if not validation_folds:
+        return {
+            "Coin": symbol,
+            "Status": "NO DATA",
+            "Reason": "Te weinig data voor walk-forward validatie",
+        }
 
     final_oos_start = int(n * 0.80)
     final_oos = data.iloc[
@@ -180,5 +127,15 @@ new_stability_loop = '''        for _train_start, _train_end, valid_start, valid
 '''
 if old_stability_loop in text:
     text = text.replace(old_stability_loop, new_stability_loop, 1)
+
+# Fail the patch if the critical optimizer integration did not occur.
+required = [
+    "from validation_engine import make_walk_forward_folds, summarize_validation",
+    "validation_folds = make_walk_forward_folds(n)",
+    "for _train_start, _train_end, valid_start, valid_end in validation_folds:",
+]
+missing = [item for item in required if item not in text]
+if missing:
+    raise SystemExit("Phase 3 integration incomplete: " + ", ".join(missing))
 
 path.write_text(text, encoding="utf-8")
