@@ -1,21 +1,15 @@
-import importlib
-import sys
-from pathlib import Path
-
-import numpy as np
-import pandas as pd
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-app = importlib.import_module("app")
-
-
-# Phase 3 validation-engine regression suite.
+from validation_engine import (
+    assert_no_oos_leakage,
+    make_walk_forward_folds,
+    summarize_validation,
+    validation_score,
+)
 
 
 def test_validation_windows_are_strictly_forward_only():
     n = 1000
     final_oos_start = int(n * 0.80)
-    folds = app.make_walk_forward_folds(n)
+    folds = make_walk_forward_folds(n)
 
     assert len(folds) == 3
     previous_validation_end = 0
@@ -26,16 +20,32 @@ def test_validation_windows_are_strictly_forward_only():
         assert valid_start >= previous_validation_end
         previous_validation_end = valid_end
 
+    assert_no_oos_leakage(folds, n)
+
 
 def test_oos_is_never_used_in_walk_forward_folds():
     n = 1000
     final_oos_start = int(n * 0.80)
-    folds = app.make_walk_forward_folds(n)
+    folds = make_walk_forward_folds(n)
     assert all(valid_end <= final_oos_start for _, _, _, valid_end in folds)
 
 
 def test_validation_summary_is_stable_for_empty_input():
-    summary = app.summarize_validation([])
+    summary = summarize_validation([])
     assert summary["folds"] == 0
     assert summary["profitable_folds"] == 0
     assert summary["total_trades"] == 0
+    assert validation_score(summary) == 0.0
+
+
+def test_validation_summary_and_score_reward_consistency():
+    results = [
+        {"pf": 1.50, "return": 8.0, "trades": 20, "dd": -8.0},
+        {"pf": 1.30, "return": 5.0, "trades": 18, "dd": -10.0},
+        {"pf": 1.20, "return": 3.0, "trades": 17, "dd": -12.0},
+    ]
+    summary = summarize_validation(results)
+    assert summary["profitable_folds"] == 3
+    assert summary["profitable_ratio"] == 1.0
+    assert summary["total_trades"] == 55
+    assert validation_score(summary) > 70.0
