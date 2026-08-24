@@ -1,0 +1,1 @@
+Phase 9 CI fix: daily loss limit is inclusive. An account at exactly -max_daily_loss_pct is blocked from opening new paper positions.
