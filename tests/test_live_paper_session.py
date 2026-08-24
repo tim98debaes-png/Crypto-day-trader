@@ -9,9 +9,13 @@ class FakeFeed:
 
 def approved_candidate():
     return {
-        "approved": True,
-        "validation_score": 0.9,
-        "robustness_score": 0.9,
+        "Status": "ROBUST",
+        "Stability": 75,
+        "OOS PF": 1.5,
+        "OOS %": 10,
+        "OOS trades": 20,
+        "OOS DD": -8,
+        "MC P05 %": -2,
         "signal_threshold": 1.0,
         "rr": 2.0,
     }
