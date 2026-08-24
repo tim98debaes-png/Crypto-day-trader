@@ -22,6 +22,9 @@ class PaperPortfolio:
     accounts: dict[str, PaperAccount] = field(default_factory=dict)
     coins: list[str] = field(default_factory=list)
     total_capital: Optional[float] = None
+    equity_history: list[float] = field(default_factory=list)
+    peak_equity: float = 0.0
+    max_drawdown_pct: float = 0.0
 
     def __post_init__(self):
         # Keep compatibility with the original Phase-5 test/API naming.
@@ -31,6 +34,8 @@ class PaperPortfolio:
         if self.capital <= 0:
             raise ValueError("capital must be positive")
         self.coins = [str(symbol).upper() for symbol in self.coins]
+        self.peak_equity = self.capital
+        self.equity_history.append(self.capital)
 
     def _allocation(self) -> float:
         """Return equal total-capital allocation for each configured symbol."""
@@ -56,14 +61,27 @@ class PaperPortfolio:
             )
         return self.accounts[symbol]
 
+    def _record_equity(self, value: float) -> None:
+        value = float(value)
+        self.equity_history.append(value)
+        self.peak_equity = max(self.peak_equity, value)
+        if self.peak_equity > 0:
+            drawdown = (self.peak_equity - value) / self.peak_equity * 100.0
+            self.max_drawdown_pct = max(self.max_drawdown_pct, drawdown)
+
     def equity(self, marks: Optional[dict] = None) -> float:
         marks = marks or {}
-        return float(
+        value = float(
             sum(
                 account.equity(marks.get(symbol))
                 for symbol, account in self.accounts.items()
             )
         )
+        # Before the first account exists, the portfolio still owns all capital.
+        if not self.accounts:
+            value = self.capital
+        self._record_equity(value)
+        return value
 
     def audit_log(self) -> list:
         events = []
@@ -75,14 +93,19 @@ class PaperPortfolio:
         return sorted(events, key=lambda item: str(item.get("timestamp", "")))
 
     def summary(self, marks: Optional[dict] = None) -> dict:
+        current_equity = self.equity(marks)
         events = self.audit_log()
         closes = [event for event in events if event.get("event") == "CLOSE"]
         wins = [event for event in closes if float(event.get("pnl", 0)) > 0]
         losses = [event for event in closes if float(event.get("pnl", 0)) < 0]
         gross_profit = sum(float(event.get("pnl", 0)) for event in wins)
         gross_loss = abs(sum(float(event.get("pnl", 0)) for event in losses))
+        return_pct = (current_equity / self.capital - 1.0) * 100.0
         return {
-            "equity": self.equity(marks),
+            "equity": current_equity,
+            "return_pct": return_pct,
+            "peak_equity": self.peak_equity,
+            "max_drawdown_pct": self.max_drawdown_pct,
             "symbols": len(self.accounts),
             "open_positions": sum(
                 account.position is not None
