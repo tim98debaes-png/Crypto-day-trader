@@ -9,6 +9,9 @@ on:
 permissions:
   contents: write
 
+env:
+  PYTHONPATH: ${{ github.workspace }}
+
 jobs:
   inject:
     runs-on: ubuntu-latest
@@ -22,7 +25,7 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install -r requirements.txt pytest
+        run: python -m pip install -r requirements.txt pytest
 
       - name: Apply validated signal injection
         run: python scripts/integrate_paper_signals.py
@@ -34,7 +37,7 @@ jobs:
         run: python -m py_compile app.py signal_engine.py paper_router.py paper_portfolio.py paper_engine.py paper_execution.py
 
       - name: Phase 5 portfolio tests
-        run: pytest -q tests/test_paper_portfolio.py tests/test_paper_strategy_runner.py tests/test_phase5_execution.py
+        run: python -m pytest -q tests/test_paper_portfolio.py tests/test_paper_strategy_runner.py tests/test_phase5_execution.py
 
       - name: Commit patched app
         run: |
