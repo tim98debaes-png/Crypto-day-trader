@@ -225,12 +225,13 @@ class PaperPortfolio:
         losses = [event for event in closes if float(event.get("pnl", 0)) < 0]
         gross_profit = sum(float(event.get("pnl", 0)) for event in wins)
         gross_loss = abs(sum(float(event.get("pnl", 0)) for event in losses))
-        return_pct = (current_equity / self.capital - 1.0) * 100.0
-        current_drawdown_pct = (
-            (self.peak_equity - current_equity) / self.peak_equity * 100.0
-            if self.peak_equity > 0
-            else 0.0
-        )
+        # Normalize percentage metrics to avoid leaking binary floating-point
+        # artifacts such as 1.0000000000000009 into the public API/tests.
+        return_pct = round((current_equity / self.capital - 1.0) * 100.0, 10)
+        current_drawdown_pct = round(
+            (self.peak_equity - current_equity) / self.peak_equity * 100.0,
+            10,
+        ) if self.peak_equity > 0 else 0.0
         avg_trade = (
             sum(float(event.get("pnl", 0)) for event in closes) / len(closes)
             if closes
@@ -243,7 +244,7 @@ class PaperPortfolio:
             "return_pct": return_pct,
             "peak_equity": self.peak_equity,
             "current_drawdown_pct": current_drawdown_pct,
-            "max_drawdown_pct": self.max_drawdown_pct,
+            "max_drawdown_pct": round(self.max_drawdown_pct, 10),
             "symbols": len(self.accounts),
             "open_positions": sum(account.position is not None for account in self.accounts.values()),
             "closed_trades": len(closes),
