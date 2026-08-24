@@ -5,6 +5,7 @@ import streamlit as st
 
 from paper_portfolio import PaperPortfolio
 from paper_reporting import build_report, closed_trade_rows, summary_rows
+from paper_operations import build_operations_status, event_summary
 
 
 st.set_page_config(
@@ -46,8 +47,16 @@ portfolio = PaperPortfolio(
 
 report = build_report(portfolio)
 summary = report["summary"]
+ops = build_operations_status(portfolio)
+events = event_summary(portfolio)
 
-st.success("Paper analytics geladen. Deze pagina verandert geen posities en plaatst geen orders.")
+health_icon = {"HEALTHY": "🟢", "WATCH": "🟡", "BLOCKED": "🔴"}.get(ops["health"], "⚪")
+st.info(
+    f"{health_icon} **Session {ops['health']}** · "
+    f"ID `{ops['session_id']}` · "
+    f"persistentie: {'aan' if ops['persistence_enabled'] else 'uit'} · "
+    f"events: {ops['total_events']}"
+)
 
 c1, c2, c3, c4, c5, c6 = st.columns(6)
 c1.metric("Equity", f"€{summary['equity']:,.2f}")
@@ -64,6 +73,19 @@ d3.metric("SHORT", summary["short_trades"])
 d4.metric("Gross profit", f"€{summary['gross_profit']:+.2f}")
 d5.metric("Gross loss", f"€{summary['gross_loss']:.2f}")
 d6.metric("Fees", f"€{summary['total_fees']:.2f}")
+
+st.subheader("Operations")
+o1, o2, o3, o4 = st.columns(4)
+o1.metric("Accounts", ops["accounts"])
+o2.metric("Open positions", ops["open_positions"])
+o3.metric("Open events", ops["open_events"])
+o4.metric("Blocked accounts", ops["blocked_accounts"])
+
+if ops["daily_risk"]:
+    st.dataframe(pd.DataFrame(ops["daily_risk"]), use_container_width=True, hide_index=True)
+
+with st.expander("Event summary"):
+    st.json(events)
 
 st.subheader("Performance metrics")
 metrics = pd.DataFrame(summary_rows(report))
