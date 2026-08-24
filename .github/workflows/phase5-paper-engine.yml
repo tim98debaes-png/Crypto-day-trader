@@ -8,6 +8,7 @@ on:
       - phase-7-portfolio-metrics
       - phase-8-dashboard-reporting
       - phase-9-paper-operations
+      - phase-10-paper-session-controls
   workflow_dispatch:
 
 env:
@@ -29,10 +30,10 @@ jobs:
         run: pip install -r requirements.txt pytest
 
       - name: Compile
-        run: python -m py_compile app.py validation_engine.py robustness_engine.py paper_engine.py paper_router.py paper_execution.py market_feed.py paper_runner.py signal_engine.py paper_strategy_runner.py paper_portfolio.py paper_state.py live_paper_session.py paper_reporting.py paper_operations.py pages/2_📊_Paper_Analytics.py
+        run: python -m py_compile app.py validation_engine.py robustness_engine.py paper_engine.py paper_router.py paper_execution.py market_feed.py paper_runner.py signal_engine.py paper_strategy_runner.py paper_portfolio.py paper_state.py live_paper_session.py paper_session_controls.py paper_reporting.py paper_operations.py pages/2_📊_Paper_Analytics.py
 
-      - name: Phase 5 through Phase 9 tests
-        run: python -m pytest -q tests/test_phase5_paper_engine.py tests/test_phase5_router.py tests/test_phase5_execution.py tests/test_market_feed.py tests/test_signal_engine.py tests/test_paper_strategy_runner.py tests/test_paper_portfolio.py tests/test_phase5_stress.py tests/test_live_paper_session.py tests/test_phase7_portfolio_metrics.py tests/test_phase6_persistence.py tests/test_paper_reporting.py tests/test_paper_operations.py
+      - name: Phase 5 through Phase 10 tests
+        run: python -m pytest -q tests/test_phase5_paper_engine.py tests/test_phase5_router.py tests/test_phase5_execution.py tests/test_market_feed.py tests/test_signal_engine.py tests/test_paper_strategy_runner.py tests/test_paper_portfolio.py tests/test_phase5_stress.py tests/test_live_paper_session.py tests/test_paper_session_controls.py tests/test_phase7_portfolio_metrics.py tests/test_phase6_persistence.py tests/test_paper_reporting.py tests/test_paper_operations.py
 
       - name: Phase 4 tests
         run: python -m pytest -q tests/test_phase4_robustness.py

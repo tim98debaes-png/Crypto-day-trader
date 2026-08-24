@@ -12,6 +12,7 @@ import time
 from market_feed import BinancePublicFeed, MarketSnapshot
 from paper_engine import PaperAccount
 from paper_execution import PaperExecutionLoop
+from paper_session_controls import PaperSessionControl
 from paper_strategy_runner import PaperStrategyRunner
 
 
@@ -38,12 +39,44 @@ class LivePaperSession:
             symbol: PaperStrategyRunner(PaperExecutionLoop(self.accounts[symbol]))
             for symbol in self.symbols
         }
+        # Keep the historical default behaviour: a newly created paper session
+        # is immediately runnable. Operators can pause/resume/stop explicitly.
+        self.control = PaperSessionControl()
+
+    @property
+    def state(self) -> str:
+        return self.control.state
+
+    def start(self) -> str:
+        return self.control.start()
+
+    def resume(self) -> str:
+        return self.control.resume()
+
+    def pause(self) -> str:
+        return self.control.pause()
+
+    def stop(self) -> str:
+        return self.control.stop()
+
+    def status(self) -> dict:
+        return self.control.snapshot()
 
     def tick(
         self,
         candidate_provider: CandidateProvider,
         indicator_provider: IndicatorProvider,
     ) -> dict:
+        if not self.control.can_tick:
+            return {
+                symbol: {
+                    "action": "WAIT",
+                    "reason": self.control.state,
+                    "session_state": self.control.state,
+                }
+                for symbol in self.symbols
+            }
+
         results = {}
         for symbol in self.symbols:
             snapshot = self.feed.snapshot(symbol)
@@ -54,9 +87,11 @@ class LivePaperSession:
                 "price": snapshot.price,
                 "timestamp": snapshot.timestamp,
             }
-            results[symbol] = self.runners[symbol].process(
+            result = self.runners[symbol].process(
                 market, candidate or {}, indicators or {}
             )
+            result["session_state"] = self.control.state
+            results[symbol] = result
         return results
 
     def run(
@@ -67,6 +102,11 @@ class LivePaperSession:
     ) -> None:
         ticks = 0
         while max_ticks is None or ticks < max_ticks:
+            if self.state == "STOPPED":
+                break
+            if self.state == "PAUSED":
+                time.sleep(self.interval_seconds)
+                continue
             self.tick(candidate_provider, indicator_provider)
             ticks += 1
             if max_ticks is None or ticks < max_ticks:
