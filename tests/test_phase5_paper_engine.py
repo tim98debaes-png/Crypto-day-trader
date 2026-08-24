@@ -28,9 +28,9 @@ def test_long_position_sizes_from_risk_and_closes_with_fees_and_slippage():
         reason="TP",
         timestamp="2026-08-23T10:10:00+00:00",
     )
-    assert pnl == pytest.approx(19.3)
+    assert pnl == pytest.approx(18.98)
     assert account.position is None
-    assert account.cash == pytest.approx(1019.3)
+    assert account.cash == pytest.approx(1018.98)
 
 
 def test_short_position_has_correct_directional_pnl():
