@@ -36,3 +36,19 @@ def test_strategy_runner_does_not_trade_without_confirmation():
         {"long_score": 1, "short_score": 1, "stop_distance": 2},
     )
     assert result["action"] == "WAIT"
+
+
+def test_existing_position_is_managed_even_without_new_signal():
+    runner = PaperStrategyRunner(PaperExecutionLoop(PaperAccount(fee_pct=0, slippage_pct=0)))
+    runner.process(
+        {"symbol": "BTCUSDT", "price": 100},
+        candidate(),
+        {"long_score": 3, "short_score": 1, "stop_distance": 2},
+    )
+    result = runner.process(
+        {"symbol": "BTCUSDT", "price": 104},
+        candidate(),
+        {"long_score": 0, "short_score": 0, "stop_distance": 2},
+    )
+    assert result["action"] == "CLOSE"
+    assert result["reason"] == "TP"
