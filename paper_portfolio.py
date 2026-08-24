@@ -223,8 +223,14 @@ class PaperPortfolio:
         closes = [event for event in events if event.get("event") == "CLOSE"]
         wins = [event for event in closes if float(event.get("pnl", 0)) > 0]
         losses = [event for event in closes if float(event.get("pnl", 0)) < 0]
+        long_trades = [event for event in closes if str(event.get("direction", "")).upper() == "LONG"]
+        short_trades = [event for event in closes if str(event.get("direction", "")).upper() == "SHORT"]
         gross_profit = sum(float(event.get("pnl", 0)) for event in wins)
         gross_loss = abs(sum(float(event.get("pnl", 0)) for event in losses))
+        total_fees = sum(
+            float(event.get("entry_fee", 0)) + float(event.get("exit_fee", 0))
+            for event in closes
+        )
         # Normalize percentage metrics to avoid leaking binary floating-point
         # artifacts such as 1.0000000000000009 into the public API/tests.
         return_pct = round((current_equity / self.capital - 1.0) * 100.0, 10)
@@ -239,6 +245,13 @@ class PaperPortfolio:
         )
         best_trade = max((float(event.get("pnl", 0)) for event in closes), default=0.0)
         worst_trade = min((float(event.get("pnl", 0)) for event in closes), default=0.0)
+        win_rate_pct = len(wins) / len(closes) * 100 if closes else 0.0
+        profit_factor = (
+            gross_profit / gross_loss
+            if gross_loss
+            else (float("inf") if gross_profit else 0.0)
+        )
+        payoff_ratio = gross_profit / len(wins) / (gross_loss / len(losses)) if wins and losses else 0.0
         result = {
             "equity": current_equity,
             "return_pct": return_pct,
@@ -250,15 +263,18 @@ class PaperPortfolio:
             "closed_trades": len(closes),
             "wins": len(wins),
             "losses": len(losses),
-            "win_rate_pct": len(wins) / len(closes) * 100 if closes else 0.0,
-            "profit_factor": (
-                gross_profit / gross_loss
-                if gross_loss
-                else (float("inf") if gross_profit else 0.0)
-            ),
+            "win_rate_pct": round(win_rate_pct, 10),
+            "profit_factor": round(profit_factor, 10) if profit_factor != float("inf") else profit_factor,
             "avg_trade": avg_trade,
+            "expectancy": avg_trade,
             "best_trade": best_trade,
             "worst_trade": worst_trade,
+            "gross_profit": gross_profit,
+            "gross_loss": gross_loss,
+            "total_fees": total_fees,
+            "payoff_ratio": round(payoff_ratio, 10),
+            "long_trades": len(long_trades),
+            "short_trades": len(short_trades),
         }
         self._save_state()
         return result
