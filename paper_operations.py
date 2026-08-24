@@ -10,7 +10,6 @@ from datetime import datetime, timezone
 import hashlib
 import json
 
-
 SCHEMA_VERSION = 1
 
 
@@ -40,12 +39,20 @@ def _daily_risk(portfolio, marks):
     values = []
     for symbol, account in portfolio.accounts.items():
         mark = marks.get(symbol)
+        daily_loss = round(account.daily_loss_pct(mark), 6)
+        limit = float(account.max_daily_loss_pct)
+        # Treat the configured loss limit as inclusive: exactly -3% is blocked.
+        blocked = (
+            account.position is None
+            and mark is not None
+            and daily_loss <= -limit
+        )
         values.append(
             {
                 "symbol": symbol,
-                "daily_loss_pct": round(account.daily_loss_pct(mark), 6),
-                "limit_pct": float(account.max_daily_loss_pct),
-                "blocked": not account.can_open(mark or 0.0) if account.position is None and mark else False,
+                "daily_loss_pct": daily_loss,
+                "limit_pct": limit,
+                "blocked": blocked,
             }
         )
     return values
