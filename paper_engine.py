@@ -19,6 +19,7 @@ class PaperPosition:
     stop_price: float
     target_price: float
     opened_at: str
+    entry_fee: float = 0.0
 
 
 @dataclass
@@ -118,6 +119,7 @@ class PaperAccount:
             stop_price=stop,
             target_price=target,
             opened_at=timestamp,
+            entry_fee=entry_fee,
         )
         self.audit_log.append({
             "event": "OPEN",
@@ -125,6 +127,7 @@ class PaperAccount:
             "direction": direction,
             "price": entry,
             "quantity": quantity,
+            "entry_fee": entry_fee,
             "timestamp": timestamp,
         })
         return self.position
@@ -151,8 +154,8 @@ class PaperAccount:
             gross = (position.entry_price - exit_price) * position.quantity
 
         exit_fee = exit_price * position.quantity * self.fee_pct / 100.0
-        pnl = gross - exit_fee
-        self.cash += pnl
+        pnl = gross - position.entry_fee - exit_fee
+        self.cash += gross - exit_fee
         self.position = None
 
         self.audit_log.append({
@@ -161,6 +164,9 @@ class PaperAccount:
             "direction": position.direction,
             "price": exit_price,
             "quantity": position.quantity,
+            "gross_pnl": gross,
+            "entry_fee": position.entry_fee,
+            "exit_fee": exit_fee,
             "pnl": pnl,
             "reason": reason,
             "timestamp": timestamp,
