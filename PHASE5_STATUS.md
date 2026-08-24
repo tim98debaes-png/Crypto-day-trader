@@ -14,6 +14,7 @@ Implemented:
 - open/close audit log;
 - optimizer-to-paper candidate gate using the real optimizer OOS/MC output schema;
 - strategy signal routing into the paper execution loop;
+- position management continues on every market update, even when there is no fresh entry signal;
 - regression tests and CI workflow.
 
 The paper gate requires TRADE status, positive OOS return and profit factor, sufficient OOS trades, bounded OOS drawdown, and the Phase 4 robustness/probability thresholds. Legacy normalized test fields remain supported.
@@ -23,3 +24,5 @@ Live exchange order placement remains disabled.
 ## Phase 5 completion gate
 
 Phase 5 is considered complete when the dedicated workflow is green for paper-engine, router, execution, market-feed, signal, strategy-runner, Phase 4 robustness, and Phase 3 regression tests.
+
+The app integration is considered complete when the dedicated injection workflow is green and the Paper Trading dashboard is present in app.py.
