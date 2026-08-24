@@ -3,10 +3,13 @@ from signal_engine import generate_signal
 
 def candidate():
     return {
-        "Status": "TRADE",
-        "MC Robustness": 80,
-        "MC Profit Probability": 65,
-        "OOS Return": 10,
+        "Status": "ROBUST",
+        "Stability": 75,
+        "OOS PF": 1.5,
+        "OOS %": 10,
+        "OOS trades": 20,
+        "OOS DD": -8,
+        "MC P05 %": -2,
         "signal_threshold": 2,
         "rr": 2,
     }
