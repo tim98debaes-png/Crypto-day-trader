@@ -40,12 +40,11 @@ class PaperAccount:
             raise ValueError("capital must be positive")
         if self.cash <= 0:
             self.cash = self.capital
-        # A fresh account must measure its daily loss from its own allocated
-        # capital.  Using the dataclass's old 1000 default for a 500-capital
-        # portfolio account incorrectly looked like a 50% daily loss and
-        # blocked the first trade.
+        # The daily-loss baseline is the account's starting capital.  This is
+        # important when a test or restored account is initialized with cash
+        # below capital to represent an existing daily loss.
         if self.day_start_equity is None:
-            self.day_start_equity = self.cash
+            self.day_start_equity = self.capital
         if self.current_day is None:
             self.current_day = self._today()
 
