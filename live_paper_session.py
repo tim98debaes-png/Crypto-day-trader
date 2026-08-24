@@ -13,6 +13,7 @@ from market_feed import BinancePublicFeed, MarketSnapshot
 from paper_engine import PaperAccount
 from paper_execution import PaperExecutionLoop
 from paper_session_controls import PaperSessionControl
+from paper_session_state import default_path, load_control, save_control
 from paper_strategy_runner import PaperStrategyRunner
 
 
@@ -24,6 +25,8 @@ IndicatorProvider = Callable[[str, MarketSnapshot], dict]
 class LivePaperSession:
     symbols: Iterable[str]
     interval_seconds: int = 60
+    persist_state: bool = False
+    state_dir: Optional[str] = None
 
     def __post_init__(self):
         self.symbols = tuple(symbol.upper() for symbol in self.symbols)
@@ -42,22 +45,49 @@ class LivePaperSession:
         # Keep the historical default behaviour: a newly created paper session
         # is immediately runnable. Operators can pause/resume/stop explicitly.
         self.control = PaperSessionControl()
+        self.state_config = {
+            "symbols": list(self.symbols),
+            "interval_seconds": self.interval_seconds,
+        }
+        self.state_path = (
+            default_path(self.state_config, self.state_dir)
+            if self.persist_state
+            else None
+        )
+        if self.state_path is not None:
+            restored = load_control(self.state_path, self.state_config)
+            if restored is not None:
+                self.control = restored
+            else:
+                save_control(self.state_path, self.state_config, self.control)
+
+    def _persist_control(self) -> None:
+        if self.state_path is not None:
+            save_control(self.state_path, self.state_config, self.control)
 
     @property
     def state(self) -> str:
         return self.control.state
 
     def start(self) -> str:
-        return self.control.start()
+        state = self.control.start()
+        self._persist_control()
+        return state
 
     def resume(self) -> str:
-        return self.control.resume()
+        state = self.control.resume()
+        self._persist_control()
+        return state
 
     def pause(self) -> str:
-        return self.control.pause()
+        state = self.control.pause()
+        self._persist_control()
+        return state
 
     def stop(self) -> str:
-        return self.control.stop()
+        state = self.control.stop()
+        self._persist_control()
+        return state
 
     def status(self) -> dict:
         return self.control.snapshot()
