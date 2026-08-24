@@ -31,7 +31,7 @@ class PaperAccount:
     slippage_pct: float = 0.02
     max_daily_loss_pct: float = 3.0
     position: Optional[PaperPosition] = None
-    day_start_equity: float = 1000.0
+    day_start_equity: Optional[float] = None
     current_day: Optional[str] = None
     audit_log: list = field(default_factory=list)
 
@@ -40,8 +40,12 @@ class PaperAccount:
             raise ValueError("capital must be positive")
         if self.cash <= 0:
             self.cash = self.capital
-        if self.day_start_equity <= 0:
-            self.day_start_equity = self.capital
+        # A fresh account must measure its daily loss from its own allocated
+        # capital.  Using the dataclass's old 1000 default for a 500-capital
+        # portfolio account incorrectly looked like a 50% daily loss and
+        # blocked the first trade.
+        if self.day_start_equity is None:
+            self.day_start_equity = self.cash
         if self.current_day is None:
             self.current_day = self._today()
 
@@ -65,7 +69,7 @@ class PaperAccount:
         return float(self.cash + unrealized)
 
     def daily_loss_pct(self, mark_price: Optional[float] = None) -> float:
-        if self.day_start_equity <= 0:
+        if self.day_start_equity is None or self.day_start_equity <= 0:
             return 100.0
         return (self.equity(mark_price) / self.day_start_equity - 1.0) * 100.0
 
