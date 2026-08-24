@@ -4,7 +4,17 @@ from paper_strategy_runner import PaperStrategyRunner
 
 
 def candidate():
-    return {"Status": "TRADE", "MC Robustness": 80, "MC Profit Probability": 65, "OOS Return": 10, "signal_threshold": 2, "rr": 2}
+    return {
+        "Status": "ROBUST",
+        "Stability": 75,
+        "OOS PF": 1.5,
+        "OOS %": 10,
+        "OOS trades": 20,
+        "OOS DD": -8,
+        "MC P05 %": -2,
+        "signal_threshold": 2,
+        "rr": 2,
+    }
 
 
 def test_strategy_runner_opens_from_confirmed_long_signal():
