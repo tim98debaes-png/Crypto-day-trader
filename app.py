@@ -3544,12 +3544,28 @@ def phase5_dashboard():
                 })
 
         summary = st.session_state.phase5_portfolio.summary(marks)
-        c1, c2, c3, c4, c5 = st.columns(5)
+        c1, c2, c3, c4, c5, c6 = st.columns(6)
         c1.metric("Equity", f"€{summary['equity']:,.2f}")
-        c2.metric("Open posities", summary["open_positions"])
-        c3.metric("Closed trades", summary["closed_trades"])
-        c4.metric("Winrate", f"{summary['win_rate_pct']:.1f}%")
-        c5.metric("Profit factor", "∞" if summary["profit_factor"] == float("inf") else f"{summary['profit_factor']:.2f}")
+        c2.metric("Rendement", f"{summary['return_pct']:+.2f}%")
+        c3.metric("Open posities", summary["open_positions"])
+        c4.metric("Closed trades", summary["closed_trades"])
+        c5.metric("Winrate", f"{summary['win_rate_pct']:.1f}%")
+        c6.metric("Profit factor", "∞" if summary["profit_factor"] == float("inf") else f"{summary['profit_factor']:.2f}")
+
+        d1, d2, d3, d4 = st.columns(4)
+        d1.metric("Peak equity", f"€{summary['peak_equity']:,.2f}")
+        d2.metric("Current DD", f"-{summary['current_drawdown_pct']:.2f}%")
+        d3.metric("Max DD", f"-{summary['max_drawdown_pct']:.2f}%")
+        d4.metric("Gem. trade", f"€{summary['avg_trade']:+.2f}")
+
+        if len(st.session_state.phase5_portfolio.equity_history) >= 2:
+            equity_frame = pd.DataFrame(
+                {
+                    "Equity": st.session_state.phase5_portfolio.equity_history
+                }
+            )
+            st.caption("Equity curve — elke verwerkte paper-markering")
+            st.line_chart(equity_frame, height=220)
 
         if cycle_rows:
             st.dataframe(pd.DataFrame(cycle_rows), use_container_width=True, hide_index=True)
@@ -3573,6 +3589,21 @@ def phase5_dashboard():
             st.dataframe(pd.DataFrame(positions), use_container_width=True, hide_index=True)
 
         events = st.session_state.phase5_portfolio.audit_log()
+        closed_events = [event for event in events if event.get("event") == "CLOSE"]
+        if closed_events:
+            st.subheader("Gesloten trades")
+            trade_rows = []
+            for event in closed_events[-20:]:
+                trade_rows.append({
+                    "Tijd": event.get("timestamp", ""),
+                    "Symbol": event.get("symbol", ""),
+                    "Direction": event.get("direction", ""),
+                    "Exit": event.get("price", 0),
+                    "P&L": event.get("pnl", 0),
+                    "Reason": event.get("reason", ""),
+                })
+            st.dataframe(pd.DataFrame(trade_rows), use_container_width=True, hide_index=True)
+
         if events:
             st.subheader("Paper audit log")
             st.dataframe(pd.DataFrame(events[-20:]), use_container_width=True, hide_index=True)
