@@ -8,6 +8,8 @@ import pandas as pd
 import requests
 import streamlit as st
 from signal_engine import generate_signal
+from paper_portfolio import PaperPortfolio
+from market_feed import BinancePublicFeed
 from validation_engine import (
     make_walk_forward_folds,
     summarize_validation,
@@ -3402,6 +3404,56 @@ with tab4:
             hide_index=True,
         )
 
+
+# ---------------- Phase 5 Paper Trading Dashboard ----------------
+with st.expander("📊 Phase 5 — Paper Trading", expanded=False):
+    st.caption("Simulation only • publieke marktdata • geen live orders")
+
+    if "phase5_portfolio" not in st.session_state:
+        st.session_state.phase5_portfolio = PaperPortfolio(
+            capital=capital,
+            risk_pct=risk,
+            fee_pct=fee,
+            slippage_pct=slip,
+        )
+
+    if "phase5_feed" not in st.session_state:
+        st.session_state.phase5_feed = BinancePublicFeed()
+
+    symbols = st.multiselect(
+        "Paper-symbolen",
+        COINS,
+        default=COINS[:3],
+        key="phase5_symbols",
+    )
+
+    if st.button("🔄 Marktdata vernieuwen", key="phase5_refresh"):
+        st.rerun()
+
+    marks = {}
+    for symbol in symbols:
+        try:
+            marks[symbol] = st.session_state.phase5_feed.snapshot(symbol).price
+        except Exception as exc:
+            st.warning(f"{symbol}: marktdata niet beschikbaar ({exc})")
+
+    summary = st.session_state.phase5_portfolio.summary(marks)
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Equity", f"€{summary['equity']:,.2f}")
+    c2.metric("Open posities", summary["open_positions"])
+    c3.metric("Closed trades", summary["closed_trades"])
+    c4.metric("Winrate", f"{summary['win_rate_pct']:.1f}%")
+
+    if marks:
+        st.dataframe(
+            pd.DataFrame(
+                [{"Symbol": symbol, "Price": price} for symbol, price in marks.items()]
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+    st.info("De koppeling van gevalideerde optimizer-signalen naar automatische paper entries blijft actief via de Phase-5 execution engine.")
 
 # ============================================================
 # Footer
