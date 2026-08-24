@@ -52,9 +52,11 @@ def test_portfolio_exposes_detailed_trade_metrics():
     assert summary["long_trades"] == 1
     assert summary["short_trades"] == 1
     assert summary["gross_profit"] == 10.0
-    assert summary["gross_loss"] == 5.0
+    # Position sizing is based on current cash, so after the first +€10
+    # trade the second trade risks €5.05 rather than the original €5.00.
+    assert summary["gross_loss"] == 5.05
     assert summary["total_fees"] == 0.0
-    assert summary["expectancy"] == 2.5
-    assert summary["payoff_ratio"] == 2.0
-    assert summary["profit_factor"] == 2.0
+    assert summary["expectancy"] == 2.475
+    assert summary["payoff_ratio"] == 1.9801980198
+    assert summary["profit_factor"] == 1.9801980198
     assert summary["win_rate_pct"] == 50.0
