@@ -5,9 +5,12 @@ from paper_execution import PaperExecutionLoop
 def candidate():
     return {
         "Status": "TRADE",
-        "MC Robustness": 80,
-        "MC Profit Probability": 65,
-        "OOS Return": 10,
+        "OOS %": 10,
+        "OOS PF": 1.5,
+        "OOS trades": 25,
+        "OOS DD": -10,
+        "Stability": 80,
+        "MC P05 %": 5,
     }
 
 
