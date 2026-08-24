@@ -3580,6 +3580,7 @@ def phase5_dashboard():
             st.info("Nog geen paper-transacties. De engine wacht op een gevalideerde kandidaat én een nieuw gesloten candle.")
 
 phase5_dashboard()
+
 # ============================================================
 # Footer
 # ============================================================
