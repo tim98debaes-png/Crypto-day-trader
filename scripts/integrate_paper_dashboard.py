@@ -16,7 +16,20 @@ DASHBOARD = '''# ---------------- Phase 5 Paper Trading Dashboard --------------
 with st.expander("📊 Phase 5 — Paper Trading", expanded=False):
     st.caption("Simulation only • publieke marktdata • gevalideerde signalen • geen live orders")
 
-    phase5_config = (float(capital), float(risk), float(fee), float(slip))
+    symbols = st.multiselect(
+        "Paper-symbolen",
+        COINS,
+        default=COINS[:3],
+        key="phase5_symbols",
+    )
+
+    phase5_config = (
+        float(capital),
+        float(risk),
+        float(fee),
+        float(slip),
+        tuple(symbols),
+    )
     if st.session_state.get("phase5_config") != phase5_config:
         st.session_state.phase5_config = phase5_config
         st.session_state.phase5_portfolio = PaperPortfolio(
@@ -24,6 +37,7 @@ with st.expander("📊 Phase 5 — Paper Trading", expanded=False):
             risk_pct=risk,
             fee_pct=fee,
             slippage_pct=slip,
+            coins=symbols,
         )
         st.session_state.phase5_loops = {}
         st.session_state.phase5_last_candle = {}
@@ -34,6 +48,7 @@ with st.expander("📊 Phase 5 — Paper Trading", expanded=False):
             risk_pct=risk,
             fee_pct=fee,
             slippage_pct=slip,
+            coins=symbols,
         )
     if "phase5_feed" not in st.session_state:
         st.session_state.phase5_feed = BinancePublicFeed()
@@ -41,13 +56,6 @@ with st.expander("📊 Phase 5 — Paper Trading", expanded=False):
         st.session_state.phase5_loops = {}
     if "phase5_last_candle" not in st.session_state:
         st.session_state.phase5_last_candle = {}
-
-    symbols = st.multiselect(
-        "Paper-symbolen",
-        COINS,
-        default=COINS[:3],
-        key="phase5_symbols",
-    )
 
     run_cycle = st.button("▶️ Verwerk nieuwe gesloten candles", key="phase5_run_cycle")
     refresh = st.button("🔄 Marktdata vernieuwen", key="phase5_refresh")
@@ -103,12 +111,13 @@ with st.expander("📊 Phase 5 — Paper Trading", expanded=False):
 
             if run_cycle and candle_time is not None:
                 if st.session_state.phase5_last_candle.get(symbol) != candle_time:
+                    strategy_params = row.get("Strategy Params") or {}
                     market = {
                         "symbol": symbol,
                         "direction": str(row.get("Direction", "LONG")).upper(),
                         "price": float(snapshot.price),
-                        "stop_distance": float(latest.atr) * float((row.get("Strategy Params") or {}).get("sl_atr", 1.5)),
-                        "rr": float(row.get("RR", (row.get("Strategy Params") or {}).get("rr", 2.0))),
+                        "stop_distance": float(latest.atr) * float(strategy_params.get("sl_atr", 1.5)),
+                        "rr": float(row.get("RR", strategy_params.get("rr", 2.0))),
                         "timestamp": candle_time,
                     }
                     result = loop.on_market(market, candidate=candidate)
