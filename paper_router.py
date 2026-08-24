@@ -1,16 +1,9 @@
-"""Gate validated optimizer candidates into the paper-trading engine.
-
-The router accepts the optimizer's real Phase 3/4 output schema and also
-supports the legacy normalized fields used by the unit tests.  No candidate
-is allowed into paper execution unless the strategy status, out-of-sample
-performance and robustness gates all pass.
-"""
+"""Gate validated optimizer candidates into the paper-trading engine."""
 
 from paper_engine import PaperAccount
 
 
 def _number(candidate: dict, *keys, default=0.0):
-    """Return the first finite numeric candidate field that exists."""
     for key in keys:
         value = candidate.get(key)
         if value is None or value == "":
@@ -29,58 +22,37 @@ def _status(candidate: dict) -> str:
 
 
 def candidate_is_approved(candidate: dict) -> bool:
-    """Require the real optimizer's Phase 3/4 quality gates before paper execution."""
+    """Match the paper gate to the optimizer's actual output contract.
+
+    strategy_discovery returns TRADE, while optimize_coin normalizes a passing
+    candidate to ROBUST.  Both are valid here.  The real optimizer exposes
+    OOS PF, OOS %, OOS trades, OOS DD, Stability and MC P05 %; there is no
+    genuine Monte-Carlo profit-probability field, so we must not fabricate one.
+    """
     status = _status(candidate)
+    if status not in {"TRADE", "ROBUST"}:
+        return False
 
-    # Real optimizer output uses OOS % and OOS PF.  Keep the normalized
-    # aliases for backwards compatibility with existing Phase 5 tests.
-    oos_return = _number(
-        candidate,
-        "OOS %",
-        "OOS Return",
-        "return",
-    )
-    oos_pf = _number(candidate, "OOS PF", "OOS Profit Factor", default=0.0)
-    oos_trades = _number(candidate, "OOS trades", "OOS Trades", default=0.0)
-    oos_dd = abs(_number(candidate, "OOS DD", "OOS Drawdown", default=0.0))
-
-    # Real Phase 4 output may expose MC Robustness/MC Profit Probability;
-    # otherwise derive a conservative gate from the available MC P05 and
-    # stability metrics.  The legacy fields remain fully supported.
-    robustness = _number(candidate, "MC Robustness", "Robustness", default=-1.0)
-    probability = _number(
-        candidate,
-        "MC Profit Probability",
-        "MC Profit Prob",
-        default=-1.0,
-    )
-    mc_p05 = _number(candidate, "MC P05 %", "MC P05", default=-999.0)
+    oos_return = _number(candidate, "OOS %", "OOS Return", "return", default=-999.0)
+    oos_pf = _number(candidate, "OOS PF", "OOS Profit Factor", "pf", default=0.0)
+    oos_trades = _number(candidate, "OOS trades", "OOS Trades", "trades", default=0.0)
+    oos_dd = _number(candidate, "OOS DD", "OOS Drawdown", "dd", default=-999.0)
     stability = _number(candidate, "Stability", "Neighbour Stability", default=-1.0)
+    mc_p05 = _number(candidate, "MC P05 %", "MC P05", default=-999.0)
 
-    if robustness < 0:
-        # Conservative normalized robustness from real optimizer evidence.
-        robustness = 100.0
-        if mc_p05 < 0:
-            robustness -= min(abs(mc_p05), 40.0)
-        if stability >= 0:
-            robustness *= min(max(stability / 100.0, 0.0), 1.0)
-
-    if probability < 0:
-        probability = 100.0 if mc_p05 >= 0 else 0.0
-
+    # Exact Phase 3/4 production thresholds from candidate_status().
     return (
-        status == "TRADE"
-        and oos_return > 0.0
-        and oos_pf > 0.0
-        and oos_trades >= 1.0
-        and robustness >= 60.0
-        and probability >= 55.0
-        and oos_dd < 100.0
+        oos_return > 0.0
+        and oos_pf >= 1.20
+        and oos_trades >= 15.0
+        and oos_dd > -20.0
+        and stability >= 60.0
+        and mc_p05 > -10.0
     )
 
 
 def route_candidate(account: PaperAccount, candidate: dict, market: dict):
-    """Open one paper position only when every quality gate passes."""
+    """Open one paper position only when every production gate passes."""
     if not candidate_is_approved(candidate):
         return {"action": "BLOCK", "reason": "quality_gates_failed"}
 
