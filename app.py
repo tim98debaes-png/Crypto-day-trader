@@ -3406,175 +3406,180 @@ with tab4:
         )
 
 
-# ---------------- Phase 5 Paper Trading Dashboard ----------------
-with st.expander("📊 Phase 5 — Paper Trading", expanded=False):
-    st.caption("Simulation only • publieke marktdata • gevalideerde signalen • geen live orders")
+@st.fragment(run_every="5m")
+def phase5_dashboard():
+    # ---------------- Phase 5 Paper Trading Dashboard ----------------
+    with st.expander("📊 Phase 5 — Paper Trading", expanded=False):
+        st.caption("Simulation only • publieke marktdata • gevalideerde signalen • geen live orders")
 
-    symbols = st.multiselect(
-        "Paper-symbolen",
-        COINS,
-        default=COINS[:3],
-        key="phase5_symbols",
-    )
-
-    phase5_config = (
-        float(capital),
-        float(risk),
-        float(fee),
-        float(slip),
-        tuple(symbols),
-    )
-    if st.session_state.get("phase5_config") != phase5_config:
-        st.session_state.phase5_config = phase5_config
-        st.session_state.phase5_portfolio = PaperPortfolio(
-            capital=capital,
-            risk_pct=risk,
-            fee_pct=fee,
-            slippage_pct=slip,
-            coins=symbols,
+        symbols = st.multiselect(
+            "Paper-symbolen",
+            COINS,
+            default=COINS[:3],
+            key="phase5_symbols",
         )
-        st.session_state.phase5_loops = {}
-        st.session_state.phase5_last_candle = {}
 
-    if "phase5_portfolio" not in st.session_state:
-        st.session_state.phase5_portfolio = PaperPortfolio(
-            capital=capital,
-            risk_pct=risk,
-            fee_pct=fee,
-            slippage_pct=slip,
-            coins=symbols,
+        phase5_config = (
+            float(capital),
+            float(risk),
+            float(fee),
+            float(slip),
+            tuple(symbols),
         )
-    if "phase5_feed" not in st.session_state:
-        st.session_state.phase5_feed = BinancePublicFeed()
-    if "phase5_loops" not in st.session_state:
-        st.session_state.phase5_loops = {}
-    if "phase5_last_candle" not in st.session_state:
-        st.session_state.phase5_last_candle = {}
+        if st.session_state.get("phase5_config") != phase5_config:
+            st.session_state.phase5_config = phase5_config
+            st.session_state.phase5_portfolio = PaperPortfolio(
+                capital=capital,
+                risk_pct=risk,
+                fee_pct=fee,
+                slippage_pct=slip,
+                coins=symbols,
+            )
+            st.session_state.phase5_loops = {}
+            st.session_state.phase5_last_candle = {}
 
-    run_cycle = st.button("▶️ Verwerk nieuwe gesloten candles", key="phase5_run_cycle")
-    refresh = st.button("🔄 Marktdata vernieuwen", key="phase5_refresh")
-    if refresh:
-        st.rerun()
+        if "phase5_portfolio" not in st.session_state:
+            st.session_state.phase5_portfolio = PaperPortfolio(
+                capital=capital,
+                risk_pct=risk,
+                fee_pct=fee,
+                slippage_pct=slip,
+                coins=symbols,
+            )
+        if "phase5_feed" not in st.session_state:
+            st.session_state.phase5_feed = BinancePublicFeed()
+        if "phase5_loops" not in st.session_state:
+            st.session_state.phase5_loops = {}
+        if "phase5_last_candle" not in st.session_state:
+            st.session_state.phase5_last_candle = {}
 
-    marks = {}
-    cycle_rows = []
+        st.button("▶️ Verwerk nu", key="phase5_run_cycle")
+        run_cycle = True
+        st.caption("🟢 Auto-check actief — elke 5 minuten; alleen nieuwe gesloten candles worden verwerkt.")
+        refresh = st.button("🔄 Marktdata vernieuwen", key="phase5_refresh")
+        if refresh:
+            st.rerun()
 
-    for symbol in symbols:
-        try:
-            snapshot = st.session_state.phase5_feed.snapshot(symbol)
-            marks[symbol] = snapshot.price
+        marks = {}
+        cycle_rows = []
 
-            account = st.session_state.phase5_portfolio.account(symbol)
-            loop = st.session_state.phase5_loops.get(symbol)
-            if loop is None or loop.account is not account:
-                loop = PaperExecutionLoop(account)
-                st.session_state.phase5_loops[symbol] = loop
+        for symbol in symbols:
+            try:
+                snapshot = st.session_state.phase5_feed.snapshot(symbol)
+                marks[symbol] = snapshot.price
 
-            candidate = None
-            signal_action = "WAIT"
-            signal_reason = "geen gevalideerde kandidaat"
-            candle_time = None
+                account = st.session_state.phase5_portfolio.account(symbol)
+                loop = st.session_state.phase5_loops.get(symbol)
+                if loop is None or loop.account is not account:
+                    loop = PaperExecutionLoop(account)
+                    st.session_state.phase5_loops[symbol] = loop
 
-            saved = active_results.get(symbol, {}) if isinstance(active_results, dict) else {}
-            row = saved.get("row", {}) if isinstance(saved, dict) else {}
-            if isinstance(row, dict) and row.get("Status") in {"ROBUST", "TRADE"}:
-                params = row.get("Strategy Params") or {}
-                if isinstance(params, dict):
-                    data = build_mtf(symbol, 1000)
-                    latest = data.iloc[-1]
-                    candle_time = latest.time.isoformat()
-                    long_scores, short_scores = make_signals(data, params)
-                    candidate = dict(row)
-                    candidate["signal_threshold"] = float(row.get("threshold", params.get("threshold", 70)))
-                    candidate["rr"] = float(row.get("RR", params.get("rr", 2.0)))
-                    generated = generate_signal(
-                        candidate,
-                        {
-                            "long_score": int(long_scores[-1]),
-                            "short_score": int(short_scores[-1]),
-                            "stop_distance": float(latest.atr) * float(params.get("sl_atr", 1.5)),
-                            "rr": float(params.get("rr", 2.0)),
-                        },
-                    )
-                    signal_action = generated.action
-                    signal_reason = generated.reason
+                candidate = None
+                signal_action = "WAIT"
+                signal_reason = "geen gevalideerde kandidaat"
+                candle_time = None
 
-                    expected_direction = str(row.get("Direction", "")).upper()
-                    if generated.action != expected_direction:
-                        candidate = None
+                saved = active_results.get(symbol, {}) if isinstance(active_results, dict) else {}
+                row = saved.get("row", {}) if isinstance(saved, dict) else {}
+                if isinstance(row, dict) and row.get("Status") in {"ROBUST", "TRADE"}:
+                    params = row.get("Strategy Params") or {}
+                    if isinstance(params, dict):
+                        data = build_mtf(symbol, 1000)
+                        latest = data.iloc[-1]
+                        candle_time = latest.time.isoformat()
+                        long_scores, short_scores = make_signals(data, params)
+                        candidate = dict(row)
+                        candidate["signal_threshold"] = float(row.get("threshold", params.get("threshold", 70)))
+                        candidate["rr"] = float(row.get("RR", params.get("rr", 2.0)))
+                        generated = generate_signal(
+                            candidate,
+                            {
+                                "long_score": int(long_scores[-1]),
+                                "short_score": int(short_scores[-1]),
+                                "stop_distance": float(latest.atr) * float(params.get("sl_atr", 1.5)),
+                                "rr": float(params.get("rr", 2.0)),
+                            },
+                        )
+                        signal_action = generated.action
+                        signal_reason = generated.reason
 
-            if run_cycle and candle_time is not None:
-                if st.session_state.phase5_last_candle.get(symbol) != candle_time:
-                    strategy_params = row.get("Strategy Params") or {}
-                    market = {
-                        "symbol": symbol,
-                        "direction": str(row.get("Direction", "LONG")).upper(),
-                        "price": float(snapshot.price),
-                        "stop_distance": float(latest.atr) * float(strategy_params.get("sl_atr", 1.5)),
-                        "rr": float(row.get("RR", strategy_params.get("rr", 2.0))),
-                        "timestamp": candle_time,
-                    }
-                    result = loop.on_market(market, candidate=candidate)
-                    st.session_state.phase5_last_candle[symbol] = candle_time
+                        expected_direction = str(row.get("Direction", "")).upper()
+                        if generated.action != expected_direction:
+                            candidate = None
+
+                if run_cycle and candle_time is not None:
+                    if st.session_state.phase5_last_candle.get(symbol) != candle_time:
+                        strategy_params = row.get("Strategy Params") or {}
+                        market = {
+                            "symbol": symbol,
+                            "direction": str(row.get("Direction", "LONG")).upper(),
+                            "price": float(snapshot.price),
+                            "stop_distance": float(latest.atr) * float(strategy_params.get("sl_atr", 1.5)),
+                            "rr": float(row.get("RR", strategy_params.get("rr", 2.0))),
+                            "timestamp": candle_time,
+                        }
+                        result = loop.on_market(market, candidate=candidate)
+                        st.session_state.phase5_last_candle[symbol] = candle_time
+                    else:
+                        result = {"action": "SKIP", "reason": "candle already processed"}
                 else:
-                    result = {"action": "SKIP", "reason": "candle already processed"}
-            else:
-                result = {"action": "PREVIEW", "reason": "druk op verwerk om paper execution te activeren"}
+                    result = {"action": "WAIT", "reason": "geen nieuwe gesloten candle of geen gevalideerde kandidaat"}
 
-            cycle_rows.append({
-                "Symbol": symbol,
-                "Signal": signal_action,
-                "Execution": result.get("action", ""),
-                "Reason": result.get("reason", signal_reason),
-                "Price": round(float(snapshot.price), 8),
-                "Position": account.position.direction if account.position else "-",
-            })
-        except Exception as exc:
-            cycle_rows.append({
-                "Symbol": symbol,
-                "Signal": "ERROR",
-                "Execution": "ERROR",
-                "Reason": str(exc),
-                "Price": marks.get(symbol, 0),
-                "Position": "-",
-            })
+                cycle_rows.append({
+                    "Symbol": symbol,
+                    "Signal": signal_action,
+                    "Execution": result.get("action", ""),
+                    "Reason": result.get("reason", signal_reason),
+                    "Price": round(float(snapshot.price), 8),
+                    "Position": account.position.direction if account.position else "-",
+                })
+            except Exception as exc:
+                cycle_rows.append({
+                    "Symbol": symbol,
+                    "Signal": "ERROR",
+                    "Execution": "ERROR",
+                    "Reason": str(exc),
+                    "Price": marks.get(symbol, 0),
+                    "Position": "-",
+                })
 
-    summary = st.session_state.phase5_portfolio.summary(marks)
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Equity", f"€{summary['equity']:,.2f}")
-    c2.metric("Open posities", summary["open_positions"])
-    c3.metric("Closed trades", summary["closed_trades"])
-    c4.metric("Winrate", f"{summary['win_rate_pct']:.1f}%")
-    c5.metric("Profit factor", "∞" if summary["profit_factor"] == float("inf") else f"{summary['profit_factor']:.2f}")
+        summary = st.session_state.phase5_portfolio.summary(marks)
+        c1, c2, c3, c4, c5 = st.columns(5)
+        c1.metric("Equity", f"€{summary['equity']:,.2f}")
+        c2.metric("Open posities", summary["open_positions"])
+        c3.metric("Closed trades", summary["closed_trades"])
+        c4.metric("Winrate", f"{summary['win_rate_pct']:.1f}%")
+        c5.metric("Profit factor", "∞" if summary["profit_factor"] == float("inf") else f"{summary['profit_factor']:.2f}")
 
-    if cycle_rows:
-        st.dataframe(pd.DataFrame(cycle_rows), use_container_width=True, hide_index=True)
+        if cycle_rows:
+            st.dataframe(pd.DataFrame(cycle_rows), use_container_width=True, hide_index=True)
 
-    positions = []
-    for symbol, account in st.session_state.phase5_portfolio.accounts.items():
-        if account.position is not None:
-            position = account.position
-            positions.append({
-                "Symbol": symbol,
-                "Direction": position.direction,
-                "Entry": position.entry_price,
-                "Quantity": position.quantity,
-                "Stop": position.stop_price,
-                "Target": position.target_price,
-                "Entry fee": position.entry_fee,
-            })
+        positions = []
+        for symbol, account in st.session_state.phase5_portfolio.accounts.items():
+            if account.position is not None:
+                position = account.position
+                positions.append({
+                    "Symbol": symbol,
+                    "Direction": position.direction,
+                    "Entry": position.entry_price,
+                    "Quantity": position.quantity,
+                    "Stop": position.stop_price,
+                    "Target": position.target_price,
+                    "Entry fee": position.entry_fee,
+                })
 
-    if positions:
-        st.subheader("Open paper-posities")
-        st.dataframe(pd.DataFrame(positions), use_container_width=True, hide_index=True)
+        if positions:
+            st.subheader("Open paper-posities")
+            st.dataframe(pd.DataFrame(positions), use_container_width=True, hide_index=True)
 
-    events = st.session_state.phase5_portfolio.audit_log()
-    if events:
-        st.subheader("Paper audit log")
-        st.dataframe(pd.DataFrame(events[-20:]), use_container_width=True, hide_index=True)
-    else:
-        st.info("Nog geen paper-transacties. De engine wacht op een gevalideerde kandidaat én een nieuw gesloten candle.")
+        events = st.session_state.phase5_portfolio.audit_log()
+        if events:
+            st.subheader("Paper audit log")
+            st.dataframe(pd.DataFrame(events[-20:]), use_container_width=True, hide_index=True)
+        else:
+            st.info("Nog geen paper-transacties. De engine wacht op een gevalideerde kandidaat én een nieuw gesloten candle.")
 
+phase5_dashboard()
 # ============================================================
 # Footer
 # ============================================================
