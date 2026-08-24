@@ -5,7 +5,7 @@ It never places live exchange orders.
 """
 
 from pathlib import Path
-from textwrap import indent
+from textwrap import dedent
 
 APP = Path("app.py")
 FOOTER_MARKER = "# ============================================================\n# Footer\n# ============================================================"
@@ -35,11 +35,20 @@ def main():
     end = text.index(FOOTER_MARKER, start)
     block = text[start:end].strip()
 
-    # Do not wrap the dashboard more than once.
-    if "def phase5_dashboard():" in block:
-        return
+    # The dashboard may already be committed in wrapped form. Normalize it
+    # back to a top-level Streamlit block so the injector is idempotent and
+    # cannot create an unexpected-unindent syntax error.
+    if block.startswith("@st.fragment(run_every=\"5m\")"):
+        function_marker = "def phase5_dashboard():\n"
+        if function_marker not in block:
+            raise SystemExit("Phase 5 dashboard function marker not found")
+        body = block.split(function_marker, 1)[1]
+        body = dedent(body)
+        body = body.replace("\nphase5_dashboard()", "", 1).rstrip()
+        block = body
 
-    # Automatic fragment reruns perform the paper cycle every five minutes.
+    # If the dashboard is still the older top-level version, make execution
+    # automatic within the current Streamlit run without changing indentation.
     old_button = '    run_cycle = st.button("▶️ Verwerk nieuwe gesloten candles", key="phase5_run_cycle")'
     new_button = (
         '    st.button("▶️ Verwerk nu", key="phase5_run_cycle")\n'
@@ -53,14 +62,7 @@ def main():
         1,
     )
 
-    wrapped = (
-        '@st.fragment(run_every="5m")\n'
-        'def phase5_dashboard():\n'
-        + indent(block, "    ")
-        + "\n\nphase5_dashboard()\n"
-    )
-
-    text = text[:start] + wrapped + text[end:]
+    text = text[:start] + block + "\n\n" + text[end:]
     APP.write_text(text, encoding="utf-8")
 
 
