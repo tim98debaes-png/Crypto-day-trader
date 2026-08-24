@@ -101,10 +101,29 @@ class PaperPortfolio:
         gross_profit = sum(float(event.get("pnl", 0)) for event in wins)
         gross_loss = abs(sum(float(event.get("pnl", 0)) for event in losses))
         return_pct = (current_equity / self.capital - 1.0) * 100.0
+        current_drawdown_pct = (
+            (self.peak_equity - current_equity) / self.peak_equity * 100.0
+            if self.peak_equity > 0
+            else 0.0
+        )
+        avg_trade = (
+            sum(float(event.get("pnl", 0)) for event in closes) / len(closes)
+            if closes
+            else 0.0
+        )
+        best_trade = max(
+            (float(event.get("pnl", 0)) for event in closes),
+            default=0.0,
+        )
+        worst_trade = min(
+            (float(event.get("pnl", 0)) for event in closes),
+            default=0.0,
+        )
         return {
             "equity": current_equity,
             "return_pct": return_pct,
             "peak_equity": self.peak_equity,
+            "current_drawdown_pct": current_drawdown_pct,
             "max_drawdown_pct": self.max_drawdown_pct,
             "symbols": len(self.accounts),
             "open_positions": sum(
@@ -120,4 +139,7 @@ class PaperPortfolio:
                 if gross_loss
                 else (float("inf") if gross_profit else 0.0)
             ),
+            "avg_trade": avg_trade,
+            "best_trade": best_trade,
+            "worst_trade": worst_trade,
         }
