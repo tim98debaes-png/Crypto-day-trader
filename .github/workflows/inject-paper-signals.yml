@@ -21,11 +21,20 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Apply narrow app injection
+      - name: Install dependencies
+        run: pip install -r requirements.txt pytest
+
+      - name: Apply validated signal injection
         run: python scripts/integrate_paper_signals.py
 
-      - name: Compile patched app
-        run: python -m py_compile app.py signal_engine.py paper_router.py
+      - name: Apply paper dashboard injection
+        run: python scripts/integrate_paper_dashboard.py
+
+      - name: Compile patched app and paper modules
+        run: python -m py_compile app.py signal_engine.py paper_router.py paper_portfolio.py paper_engine.py paper_execution.py
+
+      - name: Phase 5 portfolio tests
+        run: pytest -q tests/test_paper_portfolio.py tests/test_paper_strategy_runner.py tests/test_phase5_execution.py
 
       - name: Commit patched app
         run: |
@@ -35,6 +44,6 @@ jobs:
             echo "No app changes required."
           else
             git add app.py
-            git commit -m "Phase 5: inject validated paper signals into app"
+            git commit -m "Phase 5: add paper trading dashboard"
             git push
           fi
