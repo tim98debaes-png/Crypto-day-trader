@@ -1,13 +1,13 @@
 """Phase 23 deterministic reliability harness for paper trading.
 
-This harness exercises the full paper lifecycle without exchange access:
-market events -> paper execution -> observability -> restart -> recovery.
-It deliberately fails closed on state corruption, sequence gaps, stale
-heartbeats, equity drift, unexpected positions, or live-order attempts.
+This harness exercises paper state and observability without exchange access.
+It fails closed on malformed market data, checkpoint loss, sequence gaps,
+state corruption, stale heartbeats, equity/capital invariant violations, and
+unexpected recovery state.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from typing import Any, Callable, Iterable, Optional
 
 from paper_engine import PaperAccount
@@ -39,7 +39,7 @@ class ReliabilityReport:
 
 
 class PaperReliabilityHarness:
-    """Runs bounded deterministic reliability scenarios around paper state."""
+    """Run bounded deterministic reliability scenarios around paper state."""
 
     def __init__(self, account_factory: Callable[[], PaperAccount], state_path: str,
                  stale_after_seconds: int = 900):
@@ -47,8 +47,15 @@ class PaperReliabilityHarness:
         self.state_path = state_path
         self.stale_after_seconds = stale_after_seconds
 
-    def run(self, markets: Iterable[dict[str, Any]], *, restart_after: Optional[int] = None,
-            expected_capital: Optional[float] = None) -> ReliabilityReport:
+    def run(
+        self,
+        markets: Iterable[dict[str, Any]],
+        *,
+        restart_after: Optional[int] = None,
+        restart_points: Optional[Iterable[int]] = None,
+        expected_capital: Optional[float] = None,
+        active_candidate_id: Optional[str] = None,
+    ) -> ReliabilityReport:
         account = self.account_factory()
         observer = PaperSessionObserver(
             stale_after_seconds=self.stale_after_seconds,
@@ -56,23 +63,28 @@ class PaperReliabilityHarness:
         )
         violations: list[ReliabilityViolation] = []
         events = list(markets)
+        restart_set = set(restart_points or ())
+        if restart_after is not None:
+            restart_set.add(int(restart_after))
         restarts = 0
         previous_equity: Optional[float] = None
-
-        if expected_capital is None:
-            expected_capital = account.capital
+        expected_capital = account.capital if expected_capital is None else float(expected_capital)
+        valid_events = 0
 
         for index, market in enumerate(events, start=1):
             if not isinstance(market, dict) or "price" not in market or "symbol" not in market:
                 violations.append(ReliabilityViolation("market_schema", f"event {index} is invalid"))
                 continue
-            price = float(market["price"])
+            try:
+                price = float(market["price"])
+            except (TypeError, ValueError):
+                violations.append(ReliabilityViolation("market_price", f"event {index} is not numeric"))
+                continue
             if price <= 0:
                 violations.append(ReliabilityViolation("market_price", f"event {index} has non-positive price"))
                 continue
 
-            # This harness intentionally exercises state and observability,
-            # not strategy selection or live execution.
+            valid_events += 1
             equity = account.equity(price)
             summary = {
                 "equity": equity,
@@ -84,26 +96,46 @@ class PaperReliabilityHarness:
                 "monitor_status": "HEALTHY",
             }
             try:
-                observer.heartbeat(summary, active_candidate_id=None, timestamp=market.get("timestamp"))
+                observer.heartbeat(
+                    summary,
+                    active_candidate_id=active_candidate_id,
+                    timestamp=market.get("timestamp"),
+                )
             except (TypeError, ValueError, OSError) as exc:
                 violations.append(ReliabilityViolation("checkpoint_write", f"event {index}: {exc}"))
 
-            if previous_equity is not None and equity < 0:
+            if equity < 0:
                 violations.append(ReliabilityViolation("equity_invariant", f"event {index}: negative equity"))
+            if previous_equity is not None and not isinstance(equity, float):
+                violations.append(ReliabilityViolation("equity_type", f"event {index}: invalid equity type"))
             previous_equity = equity
 
-            if restart_after and index == restart_after:
+            if index in restart_set:
+                expected_sequence = observer.checkpoints[-1].sequence if observer.checkpoints else 0
+                expected_candidate = observer.checkpoints[-1].active_candidate_id if observer.checkpoints else active_candidate_id
                 try:
                     observer = PaperSessionObserver(
                         stale_after_seconds=self.stale_after_seconds,
                         state_path=self.state_path,
                     )
                     restarts += 1
-                except Exception as exc:  # recovery must never silently pass
+                    if not observer.checkpoints:
+                        violations.append(ReliabilityViolation("restart_recovery", f"event {index}: no checkpoint restored"))
+                    elif observer.checkpoints[-1].sequence != expected_sequence:
+                        violations.append(ReliabilityViolation("restart_sequence", f"event {index}: expected {expected_sequence}, got {observer.checkpoints[-1].sequence}"))
+                    elif observer.checkpoints[-1].active_candidate_id != expected_candidate:
+                        violations.append(ReliabilityViolation("restart_candidate", f"event {index}: active candidate identity changed"))
+                except Exception as exc:
                     violations.append(ReliabilityViolation("restart_recovery", str(exc)))
 
         try:
-            health = observer.health(now=events[-1].get("timestamp") if events else None)
+            expected_checkpoints = valid_events
+            actual_checkpoints = len(observer.checkpoints)
+            if actual_checkpoints != expected_checkpoints:
+                violations.append(ReliabilityViolation("checkpoint_completeness", f"expected {expected_checkpoints}, got {actual_checkpoints}"))
+            if observer.checkpoints and observer.checkpoints[-1].sequence != actual_checkpoints:
+                violations.append(ReliabilityViolation("checkpoint_sequence", "final sequence does not equal checkpoint count"))
+            health = observer.health(now=events[-1].get("timestamp") if events and isinstance(events[-1], dict) else None)
             if health["status"] in {"STALE", "INVALID"}:
                 violations.append(ReliabilityViolation("final_health", health["status"]))
         except Exception as exc:
