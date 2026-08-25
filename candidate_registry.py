@@ -154,5 +154,22 @@ class CandidateRegistry:
         self._save(data)
         return target_id
 
+    def record_monitor_event(self, decision: Any) -> None:
+        """Persist a monitor decision without changing candidate state."""
+        data = self._load()
+        data["events"].append({
+            "event": "MONITOR_DECISION",
+            "schema_version": int(getattr(decision, "schema_version", 1)),
+            "status": str(getattr(decision, "status", "BLOCKED")),
+            "reason": str(getattr(decision, "reason", "unknown")),
+            "active_id": getattr(decision, "active_id", None),
+            "target_id": getattr(decision, "target_id", None),
+            "allow_new_entries": bool(getattr(decision, "allow_new_entries", False)),
+            "breaches": list(getattr(decision, "breaches", ()) or ()),
+            "metrics": dict(getattr(decision, "metrics", None) or {}),
+            "at": datetime.now(timezone.utc).isoformat(),
+        })
+        self._save(data)
+
     def history(self) -> list[dict[str, Any]]:
         return list(self._load()["events"])
