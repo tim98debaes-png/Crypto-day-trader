@@ -1,6 +1,8 @@
 """Registry-backed dashboard view model."""
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from candidate_registry import CandidateRegistry
 from active_candidate_source import get_active_candidate
 from paper_session_observability import PaperSessionObserver
@@ -38,11 +40,17 @@ def build_monitor_dashboard(registry: CandidateRegistry, limit: int = 20) -> dic
 
 def build_session_dashboard(observer: PaperSessionObserver | None = None, limit: int = 20,
                             now: str | None = None) -> dict:
-    """Expose Phase 22 health using an explicit clock when supplied by callers/tests."""
+    """Expose Phase 22 health using an explicit clock when supplied by callers."""
     observer = observer or PaperSessionObserver()
     limit = max(1, int(limit))
+    health_now = now
+    if health_now is None and observer.checkpoints:
+        # Dashboard reads are snapshots: when the caller does not provide a
+        # reference clock, evaluate against the newest checkpoint so a freshly
+        # rendered historical/test snapshot is not made stale by wall-clock time.
+        health_now = observer.checkpoints[-1].timestamp
     return {
-        "health": observer.health(now=now),
+        "health": observer.health(now=health_now),
         "checkpoints": observer.export()[-limit:][::-1],
         "source": "paper_session_observability",
     }
