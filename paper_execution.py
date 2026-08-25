@@ -2,13 +2,18 @@
 
 No exchange order calls are made here. Market snapshots are supplied by the
 caller, making the engine deterministic and safe for paper trading.
+
+Phase 20 rule: new paper entries are sourced from CandidateRegistry, not from
+optimizer session state. The legacy ``candidate`` argument is retained only for
+API compatibility and is never trusted for a new entry.
 """
 
 from dataclasses import dataclass, field
 from typing import Optional
 
+from active_candidate_source import get_active_candidate
+from candidate_registry import CandidateRegistry
 from paper_engine import PaperAccount
-from paper_router import candidate_is_approved
 
 
 @dataclass
@@ -32,8 +37,9 @@ class ExecutionStats:
 
 
 class PaperExecutionLoop:
-    def __init__(self, account: PaperAccount):
+    def __init__(self, account: PaperAccount, registry: Optional[CandidateRegistry] = None):
         self.account = account
+        self.registry = registry or CandidateRegistry()
         self.stats = ExecutionStats()
 
     def on_market(
@@ -45,7 +51,8 @@ class PaperExecutionLoop:
         price = float(market["price"])
         timestamp = market.get("timestamp")
 
-        # Manage an existing position before looking for a new entry.
+        # Manage an existing position before looking for a new entry. Exits do
+        # not require a currently active optimizer candidate.
         if self.account.position is not None:
             position = self.account.position
             stop_hit = (
@@ -66,20 +73,41 @@ class PaperExecutionLoop:
             self._record_equity(price)
             return {"action": "HOLD", "equity": self.account.equity(price)}
 
-        if candidate is None or not candidate_is_approved(candidate):
+        # Phase 20: resolve the active candidate directly from the persistent
+        # registry. The optimizer/session candidate passed by the caller is not
+        # an authorization source for a new paper position.
+        gate = get_active_candidate(self.registry, str(market["symbol"]))
+        if not gate.allowed:
             self._record_equity(price)
-            return {"action": "WAIT", "reason": "quality_gates_failed"}
+            return {"action": "WAIT", "reason": gate.reason}
+
+        active = dict(gate.active.candidate)
+        direction = str(active.get("Direction", market.get("direction", "LONG"))).upper()
+        requested_direction = str(market.get("direction", direction)).upper()
+        if direction != requested_direction:
+            self._record_equity(price)
+            return {"action": "WAIT", "reason": "candidate_direction_mismatch"}
+
+        rr_value = active.get("RR", active.get("rr", market.get("rr", 2.0)))
+        try:
+            rr = float(rr_value)
+        except (TypeError, ValueError):
+            rr = float(market.get("rr", 2.0))
 
         position = self.account.open_position(
             symbol=str(market["symbol"]),
-            direction=str(market["direction"]),
+            direction=direction,
             price=price,
             stop_distance=float(market["stop_distance"]),
-            rr=float(market["rr"]),
+            rr=rr,
             timestamp=timestamp,
         )
         self._record_equity(price)
-        return {"action": "OPEN", "position": position}
+        return {
+            "action": "OPEN",
+            "position": position,
+            "candidate_id": gate.active.candidate_id,
+        }
 
     def _record_close(self, pnl: float) -> None:
         self.stats.closed_trades += 1
