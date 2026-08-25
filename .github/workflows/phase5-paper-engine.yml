@@ -11,6 +11,7 @@ on:
       - phase-10-paper-session-controls
       - phase-11-paper-session-persistence
       - phase-12-paper-alerts
+      - phase-13-long-run-runtime
   workflow_dispatch:
 
 env:
@@ -32,10 +33,10 @@ jobs:
         run: pip install -r requirements.txt pytest
 
       - name: Compile
-        run: python -m py_compile app.py validation_engine.py robustness_engine.py paper_engine.py paper_router.py paper_execution.py market_feed.py paper_runner.py signal_engine.py paper_strategy_runner.py paper_portfolio.py paper_state.py paper_session_state.py live_paper_session.py paper_session_controls.py paper_alerts.py paper_reporting.py paper_operations.py pages/2_📊_Paper_Analytics.py
+        run: python -m py_compile app.py validation_engine.py robustness_engine.py paper_engine.py paper_router.py paper_execution.py market_feed.py paper_runner.py signal_engine.py paper_strategy_runner.py paper_portfolio.py paper_state.py paper_session_state.py live_paper_session.py paper_session_controls.py paper_alerts.py paper_runtime.py paper_reporting.py paper_operations.py pages/2_📊_Paper_Analytics.py
 
-      - name: Phase 5 through Phase 12 tests
-        run: python -m pytest -q tests/test_phase5_paper_engine.py tests/test_phase5_router.py tests/test_phase5_execution.py tests/test_market_feed.py tests/test_signal_engine.py tests/test_paper_strategy_runner.py tests/test_paper_portfolio.py tests/test_phase5_stress.py tests/test_live_paper_session.py tests/test_paper_session_controls.py tests/test_phase7_portfolio_metrics.py tests/test_phase6_persistence.py tests/test_paper_reporting.py tests/test_paper_operations.py tests/test_phase11_session_persistence.py tests/test_phase12_paper_alerts.py
+      - name: Phase 5 through Phase 13 tests
+        run: python -m pytest -q tests/test_phase5_paper_engine.py tests/test_phase5_router.py tests/test_phase5_execution.py tests/test_market_feed.py tests/test_signal_engine.py tests/test_paper_strategy_runner.py tests/test_paper_portfolio.py tests/test_phase5_stress.py tests/test_live_paper_session.py tests/test_paper_session_controls.py tests/test_phase7_portfolio_metrics.py tests/test_phase6_persistence.py tests/test_paper_reporting.py tests/test_paper_operations.py tests/test_phase11_session_persistence.py tests/test_phase12_paper_alerts.py tests/test_phase13_runtime.py
 
       - name: Phase 4 tests
         run: python -m pytest -q tests/test_phase4_robustness.py
