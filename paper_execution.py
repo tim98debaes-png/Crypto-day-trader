@@ -5,7 +5,7 @@ caller, making the engine deterministic and safe for paper trading.
 
 Phase 20 rule: new paper entries are sourced from CandidateRegistry, not from
 optimizer session state. Phase 21 adds a fail-closed paper-session monitor
-before every new entry. Existing positions may always be managed to exit.
+before every new entry. Phase 22 adds explicit session heartbeats/checkpoints.
 """
 
 from dataclasses import dataclass, field
@@ -15,6 +15,7 @@ from active_candidate_source import get_active_candidate
 from candidate_registry import CandidateRegistry
 from paper_engine import PaperAccount
 from paper_session_monitor import PaperSessionMonitor, snapshot_from_account
+from paper_session_observability import PaperSessionObserver
 
 
 @dataclass
@@ -43,10 +44,12 @@ class PaperExecutionLoop:
         account: PaperAccount,
         registry: Optional[CandidateRegistry] = None,
         monitor: Optional[PaperSessionMonitor] = None,
+        observer: Optional[PaperSessionObserver] = None,
     ):
         self.account = account
         self.registry = registry or CandidateRegistry()
         self.monitor = monitor or PaperSessionMonitor(self.registry)
+        self.observer = observer or PaperSessionObserver()
         self.stats = ExecutionStats()
         self.last_monitor_decision = None
 
@@ -59,6 +62,16 @@ class PaperExecutionLoop:
         snapshot = snapshot_from_account(self.account, mark_price)
         self.last_monitor_decision = self.monitor.evaluate(active_id, snapshot)
         return self.last_monitor_decision
+
+    def _heartbeat(self, mark_price: float, timestamp: Optional[str] = None) -> None:
+        """Record a Phase 22 operational checkpoint after each market event."""
+        summary = self.summary(_observe=False, mark_price=mark_price)
+        active = self.registry.active()
+        self.observer.heartbeat(
+            summary,
+            active_candidate_id=str(active.get("id")) if active else None,
+            timestamp=timestamp,
+        )
 
     def on_market(
         self,
@@ -86,52 +99,54 @@ class PaperExecutionLoop:
                 pnl = self.account.close_position(price, reason, timestamp)
                 self._record_close(pnl)
                 self._record_equity(price)
-                return {"action": "CLOSE", "reason": reason, "pnl": pnl}
+                result = {"action": "CLOSE", "reason": reason, "pnl": pnl}
+                self._heartbeat(price, timestamp)
+                return result
 
             self._record_equity(price)
-            return {"action": "HOLD", "equity": self.account.equity(price)}
+            result = {"action": "HOLD", "equity": self.account.equity(price)}
+            self._heartbeat(price, timestamp)
+            return result
 
-        # First preserve the explicit registry absence reason. The monitor also
-        # records the fail-closed decision, but an absent candidate is a Phase 20
-        # execution-boundary condition and should remain distinguishable from a
-        # genuine Phase 21 performance block.
         if self.registry.active() is None:
             decision = self._monitor_before_entry(price)
             self._record_equity(price)
-            return {
+            result = {
                 "action": "WAIT",
                 "reason": decision.reason,
                 "monitor_status": decision.status,
                 "monitor_reason": decision.reason,
             }
+            self._heartbeat(price, timestamp)
+            return result
 
-        # Phase 21: evaluate the paper-session health before any new entry.
-        # BLOCKED means no new entry. WATCH/HEALTHY/ROLLBACK may continue,
-        # with ROLLBACK resolving the candidate again from the registry below.
         decision = self._monitor_before_entry(price)
         if not decision.allow_new_entries:
             self._record_equity(price)
-            return {
+            result = {
                 "action": "WAIT",
                 "reason": "paper_monitor_blocked",
                 "monitor_status": decision.status,
                 "monitor_reason": decision.reason,
             }
+            self._heartbeat(price, timestamp)
+            return result
 
-        # Phase 20: resolve the active candidate directly from the persistent
-        # registry. The optimizer/session candidate passed by the caller is not
-        # an authorization source for a new paper position.
         gate = get_active_candidate(self.registry, str(market["symbol"]))
         if not gate.allowed:
             self._record_equity(price)
-            return {"action": "WAIT", "reason": gate.reason}
+            result = {"action": "WAIT", "reason": gate.reason}
+            self._heartbeat(price, timestamp)
+            return result
 
         active = dict(gate.active.candidate)
         direction = str(active.get("Direction", market.get("direction", "LONG"))).upper()
         requested_direction = str(market.get("direction", direction)).upper()
         if direction != requested_direction:
             self._record_equity(price)
-            return {"action": "WAIT", "reason": "candidate_direction_mismatch"}
+            result = {"action": "WAIT", "reason": "candidate_direction_mismatch"}
+            self._heartbeat(price, timestamp)
+            return result
 
         rr_value = active.get("RR", active.get("rr", market.get("rr", 2.0)))
         try:
@@ -148,12 +163,14 @@ class PaperExecutionLoop:
             timestamp=timestamp,
         )
         self._record_equity(price)
-        return {
+        result = {
             "action": "OPEN",
             "position": position,
             "candidate_id": gate.active.candidate_id,
             "monitor_status": decision.status,
         }
+        self._heartbeat(price, timestamp)
+        return result
 
     def _record_close(self, pnl: float) -> None:
         self.stats.closed_trades += 1
@@ -167,7 +184,7 @@ class PaperExecutionLoop:
     def _record_equity(self, price: float) -> None:
         self.stats.equity_curve.append(self.account.equity(price))
 
-    def summary(self) -> dict:
+    def summary(self, *, _observe: bool = True, mark_price: Optional[float] = None) -> dict:
         curve = self.stats.equity_curve
         peak = curve[0] if curve else self.account.capital
         max_drawdown = 0.0
@@ -176,15 +193,20 @@ class PaperExecutionLoop:
             if peak > 0:
                 max_drawdown = max(max_drawdown, (peak - value) / peak * 100)
 
-        return {
-            "equity": self.account.equity(),
+        result = {
+            "equity": self.account.equity(mark_price),
             "closed_trades": self.stats.closed_trades,
             "wins": self.stats.wins,
             "losses": self.stats.losses,
             "win_rate_pct": self.stats.win_rate,
             "profit_factor": self.stats.profit_factor,
+            "return_pct": (self.account.equity(mark_price) / self.account.capital - 1.0) * 100.0,
             "max_drawdown_pct": max_drawdown,
+            "open_positions": int(self.account.position is not None),
             "monitor_status": getattr(self.last_monitor_decision, "status", None),
             "monitor_reason": getattr(self.last_monitor_decision, "reason", None),
             "monitor_breaches": list(getattr(self.last_monitor_decision, "breaches", ()) or ()),
         }
+        if _observe:
+            self._heartbeat(mark_price or self.account.equity(), None)
+        return result
