@@ -1,10 +1,4 @@
-"""Phase 22 sustained paper-session observability.
-
-This module is read-only with respect to trading decisions. It records durable
-session heartbeats/checkpoints, validates paper-session continuity, and exposes
-an operational health summary. It never promotes candidates and never places
-orders.
-"""
+"""Phase 22 sustained paper-session observability."""
 from __future__ import annotations
 
 import hashlib
@@ -32,11 +26,16 @@ def _parse_time(value: str) -> datetime:
     return parsed.astimezone(timezone.utc)
 
 
-def _finite(value: Any) -> bool:
+def _safe_number(value: Any, *, infinity_cap: float = 1_000_000.0) -> float | None:
     try:
-        return math.isfinite(float(value))
+        number = float(value)
     except (TypeError, ValueError):
-        return False
+        return None
+    if math.isnan(number):
+        return None
+    if math.isinf(number):
+        return infinity_cap if number > 0 else None
+    return number
 
 
 @dataclass(frozen=True)
@@ -56,37 +55,30 @@ class SessionCheckpoint:
 
 
 def checkpoint_hash(payload: dict[str, Any]) -> str:
-    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), allow_nan=False, default=str)
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:20]
 
 
-def build_checkpoint(
-    summary: dict[str, Any],
-    *,
-    sequence: int,
-    active_candidate_id: Optional[str],
-    timestamp: Optional[str] = None,
-) -> SessionCheckpoint:
-    """Create a deterministic checkpoint from the current paper summary."""
-    required = (
-        "equity",
-        "closed_trades",
-        "profit_factor",
-        "return_pct",
-        "max_drawdown_pct",
-        "open_positions",
-    )
+def build_checkpoint(summary: dict[str, Any], *, sequence: int, active_candidate_id: Optional[str], timestamp: Optional[str] = None) -> SessionCheckpoint:
+    required = ("equity", "closed_trades", "profit_factor", "return_pct", "max_drawdown_pct", "open_positions")
     if any(key not in summary for key in required):
         raise ValueError("paper summary is missing required observability fields")
-    numeric = {key: summary[key] for key in required}
-    if not all(_finite(value) for value in numeric.values()):
-        raise ValueError("paper summary contains non-finite observability values")
+    values = {key: _safe_number(summary[key]) for key in required}
+    if any(value is None for value in values.values()):
+        raise ValueError("paper summary contains invalid observability values")
     if int(sequence) < 1:
         raise ValueError("sequence must be positive")
+    if values["closed_trades"] < 0 or values["max_drawdown_pct"] < 0 or values["open_positions"] < 0:
+        raise ValueError("paper summary contains negative state values")
     body = {
         "timestamp": timestamp or _now(),
         "sequence": int(sequence),
-        **{key: float(value) if key not in {"closed_trades", "open_positions"} else int(value) for key, value in numeric.items()},
+        "equity": float(values["equity"]),
+        "closed_trades": int(values["closed_trades"]),
+        "profit_factor": float(values["profit_factor"]),
+        "return_pct": float(values["return_pct"]),
+        "max_drawdown_pct": float(values["max_drawdown_pct"]),
+        "open_positions": int(values["open_positions"]),
         "monitor_status": str(summary.get("monitor_status") or "UNKNOWN"),
         "active_candidate_id": active_candidate_id,
         "schema_version": SCHEMA_VERSION,
@@ -95,7 +87,7 @@ def build_checkpoint(
 
 
 class PaperSessionObserver:
-    """Append-only in-memory observer with explicit validation and stale checks."""
+    """Append-only observer with sequence, integrity and stale-session checks."""
 
     def __init__(self, stale_after_seconds: int = 900, max_checkpoints: int = 10000):
         if stale_after_seconds < 1:
@@ -112,7 +104,6 @@ class PaperSessionObserver:
         return list(self._checkpoints)
 
     def record(self, checkpoint: SessionCheckpoint) -> None:
-        """Record a checkpoint and reject broken sequence/hash continuity."""
         if checkpoint.schema_version != SCHEMA_VERSION:
             raise ValueError("unsupported checkpoint schema")
         if checkpoint.sequence != self._sequence + 1:
@@ -121,21 +112,14 @@ class PaperSessionObserver:
         expected_hash = body.pop("state_hash")
         if checkpoint_hash(body) != expected_hash:
             raise ValueError("checkpoint integrity hash mismatch")
-        if self._checkpoints:
-            previous = self._checkpoints[-1]
-            if _parse_time(checkpoint.timestamp) < _parse_time(previous.timestamp):
-                raise ValueError("checkpoint timestamp moved backwards")
+        if self._checkpoints and _parse_time(checkpoint.timestamp) < _parse_time(self._checkpoints[-1].timestamp):
+            raise ValueError("checkpoint timestamp moved backwards")
         self._checkpoints.append(checkpoint)
-        self._checkpoints = self._checkpoints[-self.max_checkpoints :]
+        self._checkpoints = self._checkpoints[-self.max_checkpoints:]
         self._sequence = checkpoint.sequence
 
     def heartbeat(self, summary: dict[str, Any], *, active_candidate_id: Optional[str], timestamp: Optional[str] = None) -> SessionCheckpoint:
-        checkpoint = build_checkpoint(
-            summary,
-            sequence=self._sequence + 1,
-            active_candidate_id=active_candidate_id,
-            timestamp=timestamp,
-        )
+        checkpoint = build_checkpoint(summary, sequence=self._sequence + 1, active_candidate_id=active_candidate_id, timestamp=timestamp)
         self.record(checkpoint)
         return checkpoint
 
@@ -148,14 +132,11 @@ class PaperSessionObserver:
         except (TypeError, ValueError):
             return {"status": INVALID, "reason": "invalid_now", "age_seconds": None, "checkpoints": len(self._checkpoints)}
         if age > self.stale_after_seconds:
-            status = STALE
-            reason = "heartbeat_stale"
+            status, reason = STALE, "heartbeat_stale"
         elif latest.monitor_status == "BLOCKED":
-            status = DEGRADED
-            reason = "paper_monitor_blocked"
+            status, reason = DEGRADED, "paper_monitor_blocked"
         else:
-            status = HEALTHY
-            reason = "heartbeat_current"
+            status, reason = HEALTHY, "heartbeat_current"
         return {
             "status": status,
             "reason": reason,
