@@ -231,8 +231,6 @@ class PaperPortfolio:
             float(event.get("entry_fee", 0)) + float(event.get("exit_fee", 0))
             for event in closes
         )
-        # Normalize percentage metrics to avoid leaking binary floating-point
-        # artifacts such as 1.0000000000000009 into the public API/tests.
         return_pct = round((current_equity / self.capital - 1.0) * 100.0, 10)
         current_drawdown_pct = round(
             (self.peak_equity - current_equity) / self.peak_equity * 100.0,
@@ -240,8 +238,7 @@ class PaperPortfolio:
         ) if self.peak_equity > 0 else 0.0
         avg_trade = (
             sum(float(event.get("pnl", 0)) for event in closes) / len(closes)
-            if closes
-            else 0.0
+            if closes else 0.0
         )
         best_trade = max((float(event.get("pnl", 0)) for event in closes), default=0.0)
         worst_trade = min((float(event.get("pnl", 0)) for event in closes), default=0.0)
@@ -278,3 +275,84 @@ class PaperPortfolio:
         }
         self._save_state()
         return result
+
+    @staticmethod
+    def _candidate_approved(candidate: dict) -> bool:
+        return str(candidate.get("Status", "")).upper() == "ROBUST"
+
+    def process(self, symbol: str, candidate: dict, market: dict, scores: dict) -> dict:
+        symbol = str(symbol).upper()
+        account = self.account(symbol)
+        price = float(market["price"])
+        timestamp = market.get("timestamp")
+        if price <= 0:
+            raise ValueError("market price must be positive")
+
+        if account.position is not None:
+            position = account.position
+            if position.direction == "LONG":
+                if price <= position.stop_price:
+                    pnl = account.close_position(price, "SL", timestamp)
+                    self._save_state()
+                    return {"action": "CLOSE", "reason": "SL", "pnl": pnl}
+                if price >= position.target_price:
+                    pnl = account.close_position(price, "TP", timestamp)
+                    self._save_state()
+                    return {"action": "CLOSE", "reason": "TP", "pnl": pnl}
+                if float(scores.get("long_score", 0)) <= 0:
+                    pnl = account.close_position(price, "SIGNAL", timestamp)
+                    self._save_state()
+                    return {"action": "CLOSE", "reason": "SIGNAL", "pnl": pnl}
+            else:
+                if price >= position.stop_price:
+                    pnl = account.close_position(price, "SL", timestamp)
+                    self._save_state()
+                    return {"action": "CLOSE", "reason": "SL", "pnl": pnl}
+                if price <= position.target_price:
+                    pnl = account.close_position(price, "TP", timestamp)
+                    self._save_state()
+                    return {"action": "CLOSE", "reason": "TP", "pnl": pnl}
+                if float(scores.get("short_score", 0)) <= 0:
+                    pnl = account.close_position(price, "SIGNAL", timestamp)
+                    self._save_state()
+                    return {"action": "CLOSE", "reason": "SIGNAL", "pnl": pnl}
+            return {"action": "HOLD", "position": position.direction}
+
+        if not self._candidate_approved(candidate):
+            return {"action": "SKIP", "reason": "candidate_not_robust"}
+
+        long_score = float(scores.get("long_score", 0))
+        short_score = float(scores.get("short_score", 0))
+        direction = (
+            "LONG" if long_score > short_score and long_score > 0
+            else "SHORT" if short_score > long_score and short_score > 0
+            else None
+        )
+        if direction is None:
+            return {"action": "SKIP", "reason": "no_direction"}
+
+        params = candidate.get("Strategy Params") or {}
+        stop_distance = float(scores.get("stop_distance", params.get("sl_atr", 0)))
+        rr = float(scores.get("rr", params.get("rr", 0)))
+        if stop_distance <= 0 or rr <= 0:
+            return {"action": "SKIP", "reason": "invalid_risk_parameters"}
+
+        position = account.open_position(symbol, direction, price, stop_distance, rr, timestamp)
+        self._save_state()
+        return {"action": "OPEN", "direction": direction, "position": position}
+
+    def rows(self) -> list[dict]:
+        rows = []
+        for symbol, account in self.accounts.items():
+            position = account.position
+            rows.append({
+                "Symbol": symbol,
+                "Position": "FLAT" if position is None else f"{position.direction} @ {position.entry_price:.8f}",
+                "Cash": round(account.cash, 8),
+                "Equity": round(account.equity(), 8),
+                "Closed Trades": sum(1 for event in account.audit_log if event.get("event") == "CLOSE"),
+            })
+        return rows
+
+    def totals(self) -> dict:
+        return self.summary()
