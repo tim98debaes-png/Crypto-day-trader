@@ -79,6 +79,12 @@ class CandidateRegistry:
     def get(self, candidate_id: str) -> dict[str, Any] | None:
         return self._load()["candidates"].get(candidate_id)
 
+    def list_candidates(self) -> list[dict[str, Any]]:
+        """Return registered candidates in deterministic creation order."""
+        candidates = list(self._load()["candidates"].values())
+        candidates.sort(key=lambda entry: (entry.get("created_at") or "", entry.get("id") or ""))
+        return [dict(entry) for entry in candidates]
+
     def active(self) -> dict[str, Any] | None:
         data = self._load()
         active_id = data.get("active_id")
