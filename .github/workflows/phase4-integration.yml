@@ -43,6 +43,7 @@ jobs:
         run: pytest -q tests/test_phase3_validation.py
 
       - name: Commit integration when changed
+        if: github.event_name == 'push'
         run: |
           if git diff --quiet; then
             echo "No integration changes needed"
