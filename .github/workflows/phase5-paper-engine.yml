@@ -1,0 +1,32 @@
+name: Paper trading engine CI
+
+on:
+  push:
+    branches:
+      - phase-5-paper-trading-engine
+      - phase-6-paper-persistence
+      - phase-7-portfolio-metrics
+      - phase-8-dashboard-reporting
+      - phase-9-paper-operations
+      - phase-10-paper-session-controls
+      - phase-11-paper-session-persistence
+      - phase-12-paper-alerts
+      - phase-13-long-run-runtime
+      - phase-14-backtest-engine
+      - phase-15-strategy-optimizer
+  workflow_dispatch:
+
+env:
+  PYTHONPATH: ${{ github.workspace }}
+
+jobs:
+  test-paper-engine:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt pytest
+      - run: python -m py_compile backtest_engine.py strategy_optimizer.py
+      - run: python -m pytest -q tests/test_phase14_backtest.py tests/test_phase15_optimizer.py
