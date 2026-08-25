@@ -1,0 +1,1 @@
+Phase 18 scope: persistent candidate registry, controlled promotion, and rollback tracking.
