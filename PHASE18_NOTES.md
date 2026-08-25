@@ -1,0 +1,1 @@
+Candidate registry implementation and tests.
