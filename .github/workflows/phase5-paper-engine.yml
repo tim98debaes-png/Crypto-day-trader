@@ -10,9 +10,10 @@ on:
       - phase-9-paper-operations
       - phase-10-paper-session-controls
       - phase-11-paper-session-persistence
-      - phase-12-paper-alerts
+      - phase-12-alerts
       - phase-13-long-run-runtime
       - phase-14-backtest-engine
+      - phase-15-strategy-optimizer
   workflow_dispatch:
 
 env:
@@ -21,20 +22,24 @@ env:
 jobs:
   test-paper-engine:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+
       - name: Install dependencies
         run: pip install -r requirements.txt pytest
+
       - name: Compile
-        run: python -m py_compile app.py validation_engine.py robustness_engine.py paper_engine.py paper_router.py paper_execution.py market_feed.py paper_runner.py signal_engine.py paper_strategy_runner.py paper_portfolio.py paper_state.py paper_session_state.py live_paper_session.py paper_session_controls.py paper_alerts.py paper_runtime.py paper_reporting.py paper_operations.py backtest_engine.py pages/2_📊_Paper_Analytics.py
+        run: python -m py_compile app.py validation_engine.py robustness_engine.py paper_engine.py backtest_engine.py strategy_optimizer.py
+
       - name: Phase 5 through Phase 14 tests
-        run: python -m pytest -q tests/test_phase5_paper_engine.py tests/test_phase5_router.py tests/test_phase5_execution.py tests/test_market_feed.py tests/test_signal_engine.py tests/test_paper_strategy_runner.py tests/test_paper_portfolio.py tests/test_phase5_stress.py tests/test_live_paper_session.py tests/test_paper_session_controls.py tests/test_phase7_portfolio_metrics.py tests/test_phase6_persistence.py tests/test_paper_reporting.py tests/test_paper_operations.py tests/test_phase11_session_persistence.py tests/test_phase12_paper_alerts.py tests/test_phase13_runtime.py tests/test_phase14_backtest.py
-      - name: Phase 4 tests
-        run: python -m pytest -q tests/test_phase4_robustness.py
-      - name: Phase 3 regression tests
-        run: python -m pytest -q tests/test_phase3_validation.py
+        run: python -m pytest -q tests/test_phase5_paper_engine.py tests/test_phase5_router.py tests/test_phase4_robustness.py tests/test_phase3_validation.py tests/test_phase14_backtest.py
+
+      - name: Phase 15 tests
+        run: python -m pytest -q tests/test_phase15_optimizer.py

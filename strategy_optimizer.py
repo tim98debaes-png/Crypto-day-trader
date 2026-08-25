@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from itertools import product
 from typing import Callable, Iterable
-
 from backtest_engine import HistoricalBacktester
 
 StrategyFactory = Callable[[dict], Callable[[dict], dict | None]]
