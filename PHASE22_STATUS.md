@@ -1,8 +1,8 @@
 # Phase 22 — Sustained paper operation and observability
 
-Status: implementation in progress on `phase-22-sustained-paper-observability-v2`.
+Status: implementation in progress on `phase-22-sustained-paper-observability-v2`; final CI gate pending.
 
-Implemented in this phase:
+Implemented:
 - explicit paper-session heartbeats/checkpoints;
 - sequence continuity checks so dropped checkpoints are detectable;
 - integrity hash on every checkpoint;
@@ -12,7 +12,10 @@ Implemented in this phase:
 - safe handling of infinite profit factor in observability output;
 - checkpoint retention limit for long-running sessions;
 - heartbeat integration into `PaperExecutionLoop` after every market event;
-- dedicated Phase 22 CI covering the new observability tests plus the Phase 21 safety boundary.
+- durable checkpoint persistence and recovery across process restarts;
+- read-only dashboard health and checkpoint history;
+- end-to-end candidate -> registry -> paper execution -> Phase 21 rollback -> observability recovery test;
+- dedicated Phase 22 CI covering observability, dashboard, end-to-end and Phase 21 safety regressions.
 
 Safety boundary:
 - observability is read-only with respect to trading authorization;
@@ -21,8 +24,7 @@ Safety boundary:
 - it never places live orders;
 - stale/invalid observability does not authorize a new trade.
 
-Next work before Phase 22 can be marked complete:
-- persist/recover the checkpoint stream across process restarts;
-- expose session health and checkpoint history in the dashboard;
-- add an end-to-end paper-session validation scenario spanning optimizer candidate -> registry -> paper execution -> monitoring -> rollback -> recovery;
-- run the final Phase 22 CI gate and only then mark the phase green.
+Final gate:
+- run the expanded Phase 22 CI;
+- fix any regression before marking Phase 22 green;
+- after green, begin the sustained end-to-end paper validation period before any live-execution work.
