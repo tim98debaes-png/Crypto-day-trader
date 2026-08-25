@@ -91,6 +91,20 @@ class PaperExecutionLoop:
             self._record_equity(price)
             return {"action": "HOLD", "equity": self.account.equity(price)}
 
+        # First preserve the explicit registry absence reason. The monitor also
+        # records the fail-closed decision, but an absent candidate is a Phase 20
+        # execution-boundary condition and should remain distinguishable from a
+        # genuine Phase 21 performance block.
+        if self.registry.active() is None:
+            decision = self._monitor_before_entry(price)
+            self._record_equity(price)
+            return {
+                "action": "WAIT",
+                "reason": decision.reason,
+                "monitor_status": decision.status,
+                "monitor_reason": decision.reason,
+            }
+
         # Phase 21: evaluate the paper-session health before any new entry.
         # BLOCKED means no new entry. WATCH/HEALTHY/ROLLBACK may continue,
         # with ROLLBACK resolving the candidate again from the registry below.
