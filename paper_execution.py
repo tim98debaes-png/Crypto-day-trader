@@ -1,12 +1,4 @@
-"""Event-driven paper execution loop.
-
-No exchange order calls are made here. Market snapshots are supplied by the
-caller, making the engine deterministic and safe for paper trading.
-
-Phase 20 rule: new paper entries are sourced from CandidateRegistry, not from
-optimizer session state. Phase 21 adds a fail-closed paper-session monitor
-before every new entry. Phase 22 adds explicit session heartbeats/checkpoints.
-"""
+"""Event-driven paper execution loop."""
 
 from dataclasses import dataclass, field
 from typing import Optional
@@ -39,13 +31,9 @@ class ExecutionStats:
 
 
 class PaperExecutionLoop:
-    def __init__(
-        self,
-        account: PaperAccount,
-        registry: Optional[CandidateRegistry] = None,
-        monitor: Optional[PaperSessionMonitor] = None,
-        observer: Optional[PaperSessionObserver] = None,
-    ):
+    def __init__(self, account: PaperAccount, registry: Optional[CandidateRegistry] = None,
+                 monitor: Optional[PaperSessionMonitor] = None,
+                 observer: Optional[PaperSessionObserver] = None):
         self.account = account
         self.registry = registry or CandidateRegistry()
         self.monitor = monitor or PaperSessionMonitor(self.registry)
@@ -58,13 +46,13 @@ class PaperExecutionLoop:
         active_id = str(active.get("id")) if active else None
         if active_id is None:
             self.last_monitor_decision = self.monitor.evaluate(None, {})
-            return self.last_monitor_decision
-        snapshot = snapshot_from_account(self.account, mark_price)
-        self.last_monitor_decision = self.monitor.evaluate(active_id, snapshot)
+        else:
+            self.last_monitor_decision = self.monitor.evaluate(
+                active_id, snapshot_from_account(self.account, mark_price)
+            )
         return self.last_monitor_decision
 
     def _heartbeat(self, mark_price: float, timestamp: Optional[str] = None) -> None:
-        """Record a Phase 22 operational checkpoint after each market event."""
         summary = self.summary(_observe=False, mark_price=mark_price)
         active = self.registry.active()
         self.observer.heartbeat(
@@ -73,27 +61,14 @@ class PaperExecutionLoop:
             timestamp=timestamp,
         )
 
-    def on_market(
-        self,
-        market: dict,
-        candidate: Optional[dict] = None,
-        exit_signal: bool = False,
-    ) -> dict:
+    def on_market(self, market: dict, candidate: Optional[dict] = None, exit_signal: bool = False) -> dict:
         price = float(market["price"])
         timestamp = market.get("timestamp")
 
-        # Existing positions are managed before the monitoring gate. A rollback
-        # must never strand an already-open paper position.
         if self.account.position is not None:
             position = self.account.position
-            stop_hit = (
-                price <= position.stop_price if position.direction == "LONG"
-                else price >= position.stop_price
-            )
-            target_hit = (
-                price >= position.target_price if position.direction == "LONG"
-                else price <= position.target_price
-            )
+            stop_hit = price <= position.stop_price if position.direction == "LONG" else price >= position.stop_price
+            target_hit = price >= position.target_price if position.direction == "LONG" else price <= position.target_price
             if stop_hit or target_hit or exit_signal:
                 reason = "SL" if stop_hit else "TP" if target_hit else "SIGNAL"
                 pnl = self.account.close_position(price, reason, timestamp)
@@ -102,7 +77,6 @@ class PaperExecutionLoop:
                 result = {"action": "CLOSE", "reason": reason, "pnl": pnl}
                 self._heartbeat(price, timestamp)
                 return result
-
             self._record_equity(price)
             result = {"action": "HOLD", "equity": self.account.equity(price)}
             self._heartbeat(price, timestamp)
@@ -111,24 +85,27 @@ class PaperExecutionLoop:
         if self.registry.active() is None:
             decision = self._monitor_before_entry(price)
             self._record_equity(price)
-            result = {
-                "action": "WAIT",
-                "reason": decision.reason,
-                "monitor_status": decision.status,
-                "monitor_reason": decision.reason,
-            }
+            result = {"action": "WAIT", "reason": decision.reason,
+                      "monitor_status": decision.status, "monitor_reason": decision.reason}
             self._heartbeat(price, timestamp)
             return result
 
         decision = self._monitor_before_entry(price)
         if not decision.allow_new_entries:
             self._record_equity(price)
-            result = {
-                "action": "WAIT",
-                "reason": "paper_monitor_blocked",
-                "monitor_status": decision.status,
-                "monitor_reason": decision.reason,
-            }
+            result = {"action": "WAIT", "reason": "paper_monitor_blocked",
+                      "monitor_status": decision.status, "monitor_reason": decision.reason}
+            self._heartbeat(price, timestamp)
+            return result
+
+        # A rollback changes the active candidate, but the triggering event is
+        # deliberately fail-closed. The restored candidate can only enter on
+        # a subsequent market event after a fresh monitor evaluation.
+        if str(decision.status).upper() == "ROLLBACK":
+            self._record_equity(price)
+            self.last_monitor_decision = decision
+            result = {"action": "WAIT", "reason": "paper_monitor_rollback_recovery",
+                      "monitor_status": "BLOCKED", "monitor_reason": decision.reason}
             self._heartbeat(price, timestamp)
             return result
 
@@ -148,27 +125,18 @@ class PaperExecutionLoop:
             self._heartbeat(price, timestamp)
             return result
 
-        rr_value = active.get("RR", active.get("rr", market.get("rr", 2.0)))
         try:
-            rr = float(rr_value)
+            rr = float(active.get("RR", active.get("rr", market.get("rr", 2.0))))
         except (TypeError, ValueError):
             rr = float(market.get("rr", 2.0))
 
         position = self.account.open_position(
-            symbol=str(market["symbol"]),
-            direction=direction,
-            price=price,
-            stop_distance=float(market["stop_distance"]),
-            rr=rr,
-            timestamp=timestamp,
+            symbol=str(market["symbol"]), direction=direction, price=price,
+            stop_distance=float(market["stop_distance"]), rr=rr, timestamp=timestamp,
         )
         self._record_equity(price)
-        result = {
-            "action": "OPEN",
-            "position": position,
-            "candidate_id": gate.active.candidate_id,
-            "monitor_status": decision.status,
-        }
+        result = {"action": "OPEN", "position": position,
+                  "candidate_id": gate.active.candidate_id, "monitor_status": decision.status}
         self._heartbeat(price, timestamp)
         return result
 
@@ -192,7 +160,6 @@ class PaperExecutionLoop:
             peak = max(peak, value)
             if peak > 0:
                 max_drawdown = max(max_drawdown, (peak - value) / peak * 100)
-
         result = {
             "equity": self.account.equity(mark_price),
             "closed_trades": self.stats.closed_trades,
