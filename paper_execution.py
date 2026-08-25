@@ -4,8 +4,8 @@ No exchange order calls are made here. Market snapshots are supplied by the
 caller, making the engine deterministic and safe for paper trading.
 
 Phase 20 rule: new paper entries are sourced from CandidateRegistry, not from
-optimizer session state. The legacy ``candidate`` argument is retained only for
-API compatibility and is never trusted for a new entry.
+optimizer session state. Phase 21 adds a fail-closed paper-session monitor
+before every new entry. Existing positions may always be managed to exit.
 """
 
 from dataclasses import dataclass, field
@@ -14,6 +14,7 @@ from typing import Optional
 from active_candidate_source import get_active_candidate
 from candidate_registry import CandidateRegistry
 from paper_engine import PaperAccount
+from paper_session_monitor import PaperSessionMonitor, snapshot_from_account
 
 
 @dataclass
@@ -37,10 +38,27 @@ class ExecutionStats:
 
 
 class PaperExecutionLoop:
-    def __init__(self, account: PaperAccount, registry: Optional[CandidateRegistry] = None):
+    def __init__(
+        self,
+        account: PaperAccount,
+        registry: Optional[CandidateRegistry] = None,
+        monitor: Optional[PaperSessionMonitor] = None,
+    ):
         self.account = account
         self.registry = registry or CandidateRegistry()
+        self.monitor = monitor or PaperSessionMonitor(self.registry)
         self.stats = ExecutionStats()
+        self.last_monitor_decision = None
+
+    def _monitor_before_entry(self, mark_price: float):
+        active = self.registry.active()
+        active_id = str(active.get("id")) if active else None
+        if active_id is None:
+            self.last_monitor_decision = self.monitor.evaluate(None, {})
+            return self.last_monitor_decision
+        snapshot = snapshot_from_account(self.account, mark_price)
+        self.last_monitor_decision = self.monitor.evaluate(active_id, snapshot)
+        return self.last_monitor_decision
 
     def on_market(
         self,
@@ -51,8 +69,8 @@ class PaperExecutionLoop:
         price = float(market["price"])
         timestamp = market.get("timestamp")
 
-        # Manage an existing position before looking for a new entry. Exits do
-        # not require a currently active optimizer candidate.
+        # Existing positions are managed before the monitoring gate. A rollback
+        # must never strand an already-open paper position.
         if self.account.position is not None:
             position = self.account.position
             stop_hit = (
@@ -72,6 +90,19 @@ class PaperExecutionLoop:
 
             self._record_equity(price)
             return {"action": "HOLD", "equity": self.account.equity(price)}
+
+        # Phase 21: evaluate the paper-session health before any new entry.
+        # BLOCKED means no new entry. WATCH/HEALTHY/ROLLBACK may continue,
+        # with ROLLBACK resolving the candidate again from the registry below.
+        decision = self._monitor_before_entry(price)
+        if not decision.allow_new_entries:
+            self._record_equity(price)
+            return {
+                "action": "WAIT",
+                "reason": "paper_monitor_blocked",
+                "monitor_status": decision.status,
+                "monitor_reason": decision.reason,
+            }
 
         # Phase 20: resolve the active candidate directly from the persistent
         # registry. The optimizer/session candidate passed by the caller is not
@@ -107,6 +138,7 @@ class PaperExecutionLoop:
             "action": "OPEN",
             "position": position,
             "candidate_id": gate.active.candidate_id,
+            "monitor_status": decision.status,
         }
 
     def _record_close(self, pnl: float) -> None:
@@ -138,4 +170,7 @@ class PaperExecutionLoop:
             "win_rate_pct": self.stats.win_rate,
             "profit_factor": self.stats.profit_factor,
             "max_drawdown_pct": max_drawdown,
+            "monitor_status": getattr(self.last_monitor_decision, "status", None),
+            "monitor_reason": getattr(self.last_monitor_decision, "reason", None),
+            "monitor_breaches": list(getattr(self.last_monitor_decision, "breaches", ()) or ()),
         }
