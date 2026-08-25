@@ -1,8 +1,8 @@
 # Phase 21 — Paper-session monitoring and safe rollback
 
-Status: safety-monitoring foundation green on `phase-21-paper-monitoring-rollback`; orchestration/dashboard integration remains.
+Status: implementation complete; final dedicated CI run pending/validating on `phase-21-paper-monitoring-rollback`.
 
-Implemented in this phase:
+Implemented:
 - deterministic paper-session performance monitor;
 - minimum-sample protection before rollback decisions;
 - WATCH state for soft deterioration;
@@ -12,7 +12,11 @@ Implemented in this phase:
 - invalid metric and invalid registry state fail closed;
 - explicit registry deactivation when no safe fallback exists;
 - durable audit events for every monitor decision;
-- dedicated Phase 21 CI with compile checks and the Phase 20/21 safety regression suite.
+- real paper-account metric adapters;
+- monitor integrated into `PaperExecutionLoop` before every new paper entry;
+- existing positions remain exit-manageable after a rollback/block;
+- monitor status, breaches, metrics and audit trail exposed in the Candidate Registry UI;
+- dedicated Phase 21 CI covering monitoring, execution-boundary and dashboard regressions.
 
 Safety boundary:
 - paper simulation only;
@@ -28,10 +32,10 @@ Rollback policy:
 - only an existing ROLLED_BACK candidate that still passes the production paper quality gate may be restored;
 - a failed or ambiguous rollback verification fails closed.
 
-Validation:
-- Phase 21 dedicated CI run is green;
-- compile checks passed;
-- 7-file Phase 20/21 safety regression suite passed.
-- The repository-wide pytest suite still contains pre-existing Phase 4/5 contract failures unrelated to Phase 21, so those are intentionally outside this green Phase 21 gate.
+Final gate:
+- previous Phase 21 safety suite was green;
+- the new final CI adds execution-boundary integration and dashboard coverage;
+- Phase 21 will only be marked fully green after that run completes successfully.
+- Repository-wide historical Phase 4/5 failures remain separate from the Phase 21 safety gate.
 
-Next: integrate the monitor at the paper-session orchestration boundary and add dashboard/audit visibility before marking Phase 21 complete.
+Next phase after green: Phase 22 should focus on sustained paper-session operation/observability and then a full end-to-end paper validation cycle before any consideration of live execution.
