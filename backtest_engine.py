@@ -12,7 +12,6 @@ from typing import Callable, Iterable, Optional
 
 from paper_engine import PaperAccount
 
-
 SignalProvider = Callable[[dict], Optional[dict]]
 
 
@@ -65,38 +64,26 @@ class BacktestResult:
 
 
 class HistoricalBacktester:
-    def __init__(
-        self,
-        capital: float = 1000.0,
-        risk_pct: float = 0.5,
-        fee_pct: float = 0.1,
-        slippage_pct: float = 0.02,
-        max_daily_loss_pct: float = 3.0,
-    ):
+    def __init__(self, capital: float = 1000.0, risk_pct: float = 0.5,
+                 fee_pct: float = 0.1, slippage_pct: float = 0.02,
+                 max_daily_loss_pct: float = 3.0):
         self.config = {
-            "capital": float(capital),
-            "risk_pct": float(risk_pct),
-            "fee_pct": float(fee_pct),
-            "slippage_pct": float(slippage_pct),
+            "capital": float(capital), "risk_pct": float(risk_pct),
+            "fee_pct": float(fee_pct), "slippage_pct": float(slippage_pct),
             "max_daily_loss_pct": float(max_daily_loss_pct),
         }
 
-    def run(
-        self,
-        candles: Iterable[dict],
-        signal_provider: SignalProvider,
-    ) -> BacktestResult:
+    def run(self, candles: Iterable[dict], signal_provider: SignalProvider) -> BacktestResult:
+        rows = [dict(candle) for candle in candles]
         account = PaperAccount(**self.config, cash=self.config["capital"])
         equity_curve: list[dict] = []
         previous_timestamp = None
 
-        for candle in candles:
-            row = dict(candle)
+        for row in rows:
             timestamp = str(row.get("timestamp") or row.get("time") or "")
             if previous_timestamp is not None and timestamp and timestamp < previous_timestamp:
                 raise ValueError("candles must be ordered chronologically")
             previous_timestamp = timestamp or previous_timestamp
-
             close = float(row["close"])
             if close <= 0:
                 raise ValueError("candle close must be positive")
@@ -116,29 +103,22 @@ class HistoricalBacktester:
             action = str(signal.get("action", "WAIT")).upper()
             if account.position is None and action in {"LONG", "SHORT"}:
                 account.open_position(
-                    symbol=str(row.get("symbol", "BACKTEST")),
-                    direction=action,
-                    price=close,
-                    stop_distance=float(signal["stop_distance"]),
-                    rr=float(signal.get("rr", 2.0)),
-                    timestamp=timestamp or None,
+                    symbol=str(row.get("symbol", "BACKTEST")), direction=action,
+                    price=close, stop_distance=float(signal["stop_distance"]),
+                    rr=float(signal.get("rr", 2.0)), timestamp=timestamp or None,
                 )
             elif account.position is not None and action == "CLOSE":
                 account.close_position(close, "SIGNAL", timestamp or None)
 
-            equity_curve.append({
-                "timestamp": timestamp,
-                "equity": round(account.equity(close), 8),
-            })
+            equity_curve.append({"timestamp": timestamp, "equity": round(account.equity(close), 8)})
 
-        if account.position is not None and equity_curve:
-            last = equity_curve[-1]
-            account.close_position(float(candles[-1]["close"]), "END", last["timestamp"] or None)
-            equity_curve[-1]["equity"] = round(account.equity(), 8)
+        if account.position is not None and rows:
+            last = rows[-1]
+            account.close_position(float(last["close"]), "END", str(last.get("timestamp") or last.get("time") or "") or None)
+            if equity_curve:
+                equity_curve[-1]["equity"] = round(account.equity(), 8)
 
         return BacktestResult(
-            initial_capital=self.config["capital"],
-            final_equity=round(account.equity(), 8),
-            trades=list(account.audit_log),
-            equity_curve=equity_curve,
+            initial_capital=self.config["capital"], final_equity=round(account.equity(), 8),
+            trades=list(account.audit_log), equity_curve=equity_curve,
         )
