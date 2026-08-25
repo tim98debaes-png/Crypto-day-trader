@@ -4,9 +4,13 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Optional
+
+from paper_state import load, save
 
 SCHEMA_VERSION = 1
 HEALTHY = "HEALTHY"
@@ -87,23 +91,55 @@ def build_checkpoint(summary: dict[str, Any], *, sequence: int, active_candidate
 
 
 class PaperSessionObserver:
-    """Append-only observer with sequence, integrity and stale-session checks."""
+    """Append-only observer with durable checkpoints and stale-session checks."""
 
-    def __init__(self, stale_after_seconds: int = 900, max_checkpoints: int = 10000):
+    def __init__(self, stale_after_seconds: int = 900, max_checkpoints: int = 10000, state_path: Optional[str] = None):
         if stale_after_seconds < 1:
             raise ValueError("stale_after_seconds must be positive")
         if max_checkpoints < 2:
             raise ValueError("max_checkpoints must be at least 2")
         self.stale_after_seconds = int(stale_after_seconds)
         self.max_checkpoints = int(max_checkpoints)
+        self.state_path = Path(state_path or os.getenv("PAPER_OBSERVABILITY_PATH", ".paper_state/session_observability.json"))
         self._checkpoints: list[SessionCheckpoint] = []
         self._sequence = 0
+        self._restore()
 
     @property
     def checkpoints(self) -> list[SessionCheckpoint]:
         return list(self._checkpoints)
 
-    def record(self, checkpoint: SessionCheckpoint) -> None:
+    def _config(self) -> dict[str, Any]:
+        return {"kind": "phase22_observability", "stale_after_seconds": self.stale_after_seconds}
+
+    def _save(self) -> None:
+        try:
+            save(str(self.state_path), self._config(), {"checkpoints": self.export()})
+        except OSError:
+            # Observability must never crash or authorize/block trading by itself.
+            pass
+
+    def _restore(self) -> bool:
+        state = load(str(self.state_path), self._config())
+        if not state:
+            return False
+        try:
+            restored = []
+            for raw in state.get("checkpoints", []):
+                if not isinstance(raw, dict):
+                    continue
+                restored.append(SessionCheckpoint(**raw))
+            self._checkpoints = []
+            self._sequence = 0
+            for checkpoint in restored[-self.max_checkpoints:]:
+                self.record(checkpoint, persist=False)
+            return bool(self._checkpoints)
+        except (KeyError, TypeError, ValueError):
+            self._checkpoints = []
+            self._sequence = 0
+            return False
+
+    def record(self, checkpoint: SessionCheckpoint, *, persist: bool = True) -> None:
         if checkpoint.schema_version != SCHEMA_VERSION:
             raise ValueError("unsupported checkpoint schema")
         if checkpoint.sequence != self._sequence + 1:
@@ -117,6 +153,8 @@ class PaperSessionObserver:
         self._checkpoints.append(checkpoint)
         self._checkpoints = self._checkpoints[-self.max_checkpoints:]
         self._sequence = checkpoint.sequence
+        if persist:
+            self._save()
 
     def heartbeat(self, summary: dict[str, Any], *, active_candidate_id: Optional[str], timestamp: Optional[str] = None) -> SessionCheckpoint:
         checkpoint = build_checkpoint(summary, sequence=self._sequence + 1, active_candidate_id=active_candidate_id, timestamp=timestamp)
