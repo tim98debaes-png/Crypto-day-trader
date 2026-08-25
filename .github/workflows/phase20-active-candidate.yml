@@ -6,6 +6,7 @@ on:
       - phase-20-active-candidate-paper
   pull_request:
     branches:
+      - phase-19-registry-dashboard
       - phase-20-active-candidate-paper
 
 jobs:
