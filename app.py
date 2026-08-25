@@ -16,6 +16,10 @@ from validation_engine import (
     summarize_validation,
     validation_score,
 )
+from robustness_engine import (
+    monte_carlo as phase4_monte_carlo,
+    robustness_score as phase4_robustness_score,
+)
 
 
 # ============================================================
@@ -2351,6 +2355,19 @@ def strategy_discovery(
             simulations=(300 if optimizer_mode == "Snel" else 1000),
         )
 
+        phase4_returns = [
+            (float(pnl) / float(capital)) * 100.0
+            for pnl in oos.get("pnls", [])
+            if np.isfinite(pnl)
+        ]
+        phase4_mc = phase4_monte_carlo(
+            phase4_returns,
+            simulations=(300 if optimizer_mode == "Snel" else 1000),
+            seed=42,
+            initial_equity=capital,
+        )
+        phase4_mc_score = phase4_robustness_score(phase4_mc)
+
         status, confidence, reason = (
             candidate_status(
                 folds,
@@ -2362,6 +2379,7 @@ def strategy_discovery(
 
         rank = (
             1 if status == "TRADE" else 0,
+            phase4_mc_score,
             confidence,
             stability["score"],
             (
@@ -2515,6 +2533,22 @@ def strategy_discovery(
             if np.isfinite(
                 mc["p95_dd"]
             )
+            else np.nan
+        ),
+        "MC Robustness": round(phase4_mc_score, 2),
+        "MC Profit Probability": (
+            round(phase4_mc["probability_profit"] * 100, 2)
+            if phase4_mc.get("status") == "OK"
+            else np.nan
+        ),
+        "MC Return P05": (
+            round(phase4_mc["terminal_return_p05"], 2)
+            if phase4_mc.get("status") == "OK"
+            else np.nan
+        ),
+        "MC DD P95": (
+            round(phase4_mc["max_drawdown_p95"], 2)
+            if phase4_mc.get("status") == "OK"
             else np.nan
         ),
         "Reason": reason,
