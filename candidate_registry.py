@@ -134,6 +134,7 @@ class CandidateRegistry:
             promoted = [
                 entry for entry in data["candidates"].values()
                 if entry.get("status") == "ROLLED_BACK"
+                and entry.get("id") != current_id
             ]
             promoted.sort(key=lambda entry: entry.get("promoted_at") or "", reverse=True)
             target_id = promoted[0]["id"] if promoted else None
@@ -153,6 +154,22 @@ class CandidateRegistry:
         })
         self._save(data)
         return target_id
+
+    def deactivate(self) -> str | None:
+        """Remove the active candidate without selecting a replacement."""
+        data = self._load()
+        current_id = data.get("active_id")
+        if current_id:
+            data["candidates"][current_id]["status"] = "ROLLED_BACK"
+        data["active_id"] = None
+        data["events"].append({
+            "event": "DEACTIVATED",
+            "from_id": current_id,
+            "to_id": None,
+            "at": datetime.now(timezone.utc).isoformat(),
+        })
+        self._save(data)
+        return current_id
 
     def record_monitor_event(self, decision: Any) -> None:
         """Persist a monitor decision without changing candidate state."""
