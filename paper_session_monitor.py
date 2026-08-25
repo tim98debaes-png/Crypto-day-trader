@@ -105,7 +105,7 @@ class PaperSessionMonitor:
         for entry in self.registry.list_candidates():
             candidate_id = str(entry.get("id", ""))
             if not candidate_id or candidate_id == active_id: continue
-            if str(entry.get("status", "")).upper() not in {"ROLLED_BACK", "ACTIVE"}: continue
+            if str(entry.get("status", "")).upper() != "ROLLED_BACK": continue
             if not candidate_is_approved(dict(entry.get("candidate") or {})): continue
             candidates.append(entry)
         candidates.sort(key=lambda e: (e.get("promoted_at") or "", e.get("created_at") or "", e.get("id") or ""), reverse=True)
@@ -137,6 +137,6 @@ class PaperSessionMonitor:
         if target_id is not None:
             restored = self.registry.rollback(target_id)
             if restored != target_id: return self._record(MonitorDecision(BLOCKED, "rollback_verification_failed", registry_active_id, target_id, False, tuple(sorted(set(rollback))), metrics))
-            return self._record(MonitorDecision(ROLLBACK, "safe_fallback_restored", registry_active_id, target_id, False, tuple(sorted(set(rollback))), metrics))
+            return self._record(MonitorDecision(ROLLBACK, "safe_fallback_restored", registry_active_id, target_id, True, tuple(sorted(set(rollback))), metrics))
         self.registry.deactivate()
-        return self._record(MonitorDecision(BLOCKED, "no_safe_fallback", registry_active_id, None, False, tuple(sorted(set(rollback)),), metrics))
+        return self._record(MonitorDecision(BLOCKED, "no_safe_fallback", registry_active_id, None, False, tuple(sorted(set(rollback))), metrics))
