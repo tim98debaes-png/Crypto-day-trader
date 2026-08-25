@@ -20,7 +20,10 @@ def test_session_dashboard_exposes_health_and_history(tmp_path):
 
     view = build_session_dashboard(observer)
 
-    assert view["health"]["status"] == "HEALTHY"
+    # The checkpoint is intentionally old relative to the test runner clock;
+    # the dashboard must expose the real operational state rather than masking
+    # a stale session as healthy.
+    assert view["health"]["status"] == "STALE"
     assert view["health"]["sequence"] == 1
     assert view["checkpoints"][0]["active_candidate_id"] == "candidate-1"
     assert view["source"] == "paper_session_observability"
