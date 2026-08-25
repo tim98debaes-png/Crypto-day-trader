@@ -1,0 +1,22 @@
+name: Phase 21 paper monitoring
+
+on:
+  push:
+    branches:
+      - phase-21-paper-monitoring-rollback
+  pull_request:
+    branches:
+      - phase-20-active-candidate-paper
+      - phase-21-paper-monitoring-rollback
+
+jobs:
+  test-paper-monitoring:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt pytest
+      - run: python -m py_compile paper_session_monitor.py candidate_registry.py active_candidate_source.py paper_registry_router.py paper_execution.py
+      - run: python -m pytest -q
