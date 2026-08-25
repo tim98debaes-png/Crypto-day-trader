@@ -116,7 +116,6 @@ class PaperSessionObserver:
         try:
             save(str(self.state_path), self._config(), {"checkpoints": self.export()})
         except OSError:
-            # Observability must never crash or authorize/block trading by itself.
             pass
 
     def _restore(self) -> bool:
@@ -124,11 +123,7 @@ class PaperSessionObserver:
         if not state:
             return False
         try:
-            restored = []
-            for raw in state.get("checkpoints", []):
-                if not isinstance(raw, dict):
-                    continue
-                restored.append(SessionCheckpoint(**raw))
+            restored = [SessionCheckpoint(**raw) for raw in state.get("checkpoints", []) if isinstance(raw, dict)]
             self._checkpoints = []
             self._sequence = 0
             for checkpoint in restored[-self.max_checkpoints:]:
@@ -142,12 +137,12 @@ class PaperSessionObserver:
     def record(self, checkpoint: SessionCheckpoint, *, persist: bool = True) -> None:
         if checkpoint.schema_version != SCHEMA_VERSION:
             raise ValueError("unsupported checkpoint schema")
-        if checkpoint.sequence != self._sequence + 1:
-            raise ValueError("checkpoint sequence gap")
         body = asdict(checkpoint)
         expected_hash = body.pop("state_hash")
         if checkpoint_hash(body) != expected_hash:
             raise ValueError("checkpoint integrity hash mismatch")
+        if checkpoint.sequence != self._sequence + 1:
+            raise ValueError("checkpoint sequence gap")
         if self._checkpoints and _parse_time(checkpoint.timestamp) < _parse_time(self._checkpoints[-1].timestamp):
             raise ValueError("checkpoint timestamp moved backwards")
         self._checkpoints.append(checkpoint)
@@ -171,26 +166,11 @@ class PaperSessionObserver:
             return {"status": INVALID, "reason": "invalid_now", "age_seconds": None, "checkpoints": len(self._checkpoints)}
         if age > self.stale_after_seconds:
             status, reason = STALE, "heartbeat_stale"
-        elif latest.monitor_status == "BLOCKED":
-            status, reason = DEGRADED, "paper_monitor_blocked"
+        elif latest.monitor_status in {"BLOCKED", "ROLLBACK"}:
+            status, reason = DEGRADED, "paper_monitor_blocked" if latest.monitor_status == "BLOCKED" else "paper_monitor_rollback"
         else:
             status, reason = HEALTHY, "heartbeat_current"
-        return {
-            "status": status,
-            "reason": reason,
-            "age_seconds": round(age, 3),
-            "checkpoints": len(self._checkpoints),
-            "sequence": latest.sequence,
-            "latest_timestamp": latest.timestamp,
-            "active_candidate_id": latest.active_candidate_id,
-            "monitor_status": latest.monitor_status,
-            "equity": latest.equity,
-            "closed_trades": latest.closed_trades,
-            "profit_factor": latest.profit_factor,
-            "return_pct": latest.return_pct,
-            "max_drawdown_pct": latest.max_drawdown_pct,
-            "open_positions": latest.open_positions,
-        }
+        return {"status": status, "reason": reason, "age_seconds": round(age, 3), "checkpoints": len(self._checkpoints), "sequence": latest.sequence, "latest_timestamp": latest.timestamp, "active_candidate_id": latest.active_candidate_id, "monitor_status": latest.monitor_status, "equity": latest.equity, "closed_trades": latest.closed_trades, "profit_factor": latest.profit_factor, "return_pct": latest.return_pct, "max_drawdown_pct": latest.max_drawdown_pct, "open_positions": latest.open_positions}
 
     def export(self) -> list[dict[str, Any]]:
         return [asdict(checkpoint) for checkpoint in self._checkpoints]
