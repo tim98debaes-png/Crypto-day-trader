@@ -1,12 +1,13 @@
 """Registry-backed dashboard view model.
 
-The UI can use this read-only model for the active-candidate preview and the
-Phase 21 monitoring audit. It never promotes, rolls back, or executes trades.
+The UI is read-only. It can display the Phase 21 monitor and Phase 22 session
+health/checkpoint history but never promotes, rolls back, or executes trades.
 """
 from __future__ import annotations
 
 from candidate_registry import CandidateRegistry
 from active_candidate_source import get_active_candidate
+from paper_session_observability import PaperSessionObserver
 
 
 def build_candidate_dashboard(registry: CandidateRegistry, symbol: str | None = None) -> dict:
@@ -37,6 +38,17 @@ def build_monitor_dashboard(registry: CandidateRegistry, limit: int = 20) -> dic
         "metrics": dict(latest.get("metrics", {})) if latest else {},
         "events": list(reversed(events[-limit:])),
         "source": "candidate_registry.monitor_events",
+    }
+
+
+def build_session_dashboard(observer: PaperSessionObserver | None = None, limit: int = 20) -> dict:
+    """Expose Phase 22 operational health and recent checkpoints read-only."""
+    observer = observer or PaperSessionObserver()
+    limit = max(1, int(limit))
+    return {
+        "health": observer.health(),
+        "checkpoints": observer.export()[-limit:][::-1],
+        "source": "paper_session_observability",
     }
 
 
