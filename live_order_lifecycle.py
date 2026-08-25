@@ -77,7 +77,7 @@ class ControlledOrderLifecycle:
     def submit_once(self, request: LiveOrderRequest, decision) -> SubmissionResult:
         record = self.ledger.create(request)
         if record.state in SUBMISSION_LOCKED:
-            return SubmissionResult(False, "idempotent_existing_order", request.client_order_id)
+            return SubmissionResult(False, "idempotent_terminal_order", request.client_order_id)
         if record.state is OrderState.SUBMITTING or record.state is OrderState.UNKNOWN:
             raise ReconciliationRequired(request.client_order_id)
         self.ledger.transition(request.client_order_id, OrderState.SUBMITTING)
