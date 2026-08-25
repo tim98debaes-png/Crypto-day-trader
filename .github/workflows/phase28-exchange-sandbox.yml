@@ -1,0 +1,22 @@
+name: Phase 28 exchange sandbox contracts
+
+on:
+  push:
+    branches:
+      - phase-28-exchange-sandbox-contracts
+  pull_request:
+    branches:
+      - phase-27-end-to-end-integration
+      - phase-28-exchange-sandbox-contracts
+
+jobs:
+  sandbox:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt pytest
+      - run: python -m py_compile exchange_sandbox.py live_execution_contract.py live_order_lifecycle.py durable_order_ledger.py order_reconciliation.py prelive_safety_gate.py
+      - run: python -m pytest -q tests/test_phase28_exchange_sandbox.py tests/test_phase28_lifecycle_integration.py tests/test_phase27_e2e.py tests/test_phase26_durable_ledger.py tests/test_phase26_reconciliation.py tests/test_phase25_live_contract.py tests/test_phase25_order_lifecycle.py tests/test_phase24_safety_gate.py tests/test_phase23_reliability.py tests/test_phase22_observability.py tests/test_phase22_dashboard.py tests/test_phase22_end_to_end.py tests/test_phase21_monitoring.py tests/test_phase21_execution_integration.py tests/test_candidate_registry.py tests/test_active_candidate_source.py tests/test_paper_registry_router.py

@@ -1,0 +1,32 @@
+name: Phase 26 durable reconciliation
+
+on:
+  push:
+    branches:
+      - phase-26-durable-reconciliation
+  pull_request:
+    branches:
+      - phase-25-controlled-live-architecture
+      - phase-26-durable-reconciliation
+
+jobs:
+  phase26:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt pytest
+      - name: Compile safety boundary
+        run: python -m py_compile durable_order_ledger.py order_reconciliation.py live_execution_contract.py live_order_lifecycle.py prelive_safety_gate.py phase23_reliability.py paper_session_observability.py paper_execution.py paper_session_monitor.py paper_engine.py candidate_registry.py
+      - name: Phase 26 tests
+        run: python -m pytest -q tests/test_phase26_durable_ledger.py tests/test_phase26_reconciliation.py
+      - name: Phase 25 regression
+        run: python -m pytest -q tests/test_phase25_live_contract.py tests/test_phase25_order_lifecycle.py
+      - name: Phase 24 regression
+        run: python -m pytest -q tests/test_phase24_safety_gate.py
+      - name: Phase 23 regression
+        run: python -m pytest -q tests/test_phase23_reliability.py
+      - name: Phase 21-22 regression
+        run: python -m pytest -q tests/test_phase22_observability.py tests/test_phase22_dashboard.py tests/test_phase22_end_to_end.py tests/test_phase21_monitoring.py tests/test_phase21_execution_integration.py tests/test_candidate_registry.py tests/test_active_candidate_source.py tests/test_paper_registry_router.py

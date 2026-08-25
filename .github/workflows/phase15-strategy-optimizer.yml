@@ -1,0 +1,27 @@
+name: Phase 15 strategy optimizer
+
+on:
+  push:
+    branches:
+      - phase-15-strategy-optimizer
+  pull_request:
+    branches:
+      - phase-15-strategy-optimizer
+  workflow_dispatch:
+
+jobs:
+  test-phase15:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install -r requirements.txt pytest
+      - name: Compile Phase 14 and 15 modules
+        run: python -m py_compile backtest_engine.py strategy_optimizer.py
+      - name: Run Phase 15 optimizer tests
+        run: python -m pytest -q tests/test_backtest_phase2.py tests/test_phase15_optimizer.py

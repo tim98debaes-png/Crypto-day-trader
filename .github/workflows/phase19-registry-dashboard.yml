@@ -1,0 +1,21 @@
+name: Phase 19 registry dashboard
+
+on:
+  push:
+    branches:
+      - phase-19-registry-dashboard
+  pull_request:
+    branches:
+      - phase-19-registry-dashboard
+
+jobs:
+  test-registry-dashboard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt pytest
+      - run: python -m pytest -q tests/test_candidate_registry.py tests/test_candidate_dashboard.py
+      - run: python -m py_compile pages/2_Registry.py candidate_dashboard.py candidate_registry.py

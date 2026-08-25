@@ -1,0 +1,52 @@
+name: Inject Phase 5 paper signals
+
+on:
+  push:
+    branches:
+      - phase-5-paper-trading-engine
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  PYTHONPATH: ${{ github.workspace }}
+
+jobs:
+  inject:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt pytest
+
+      - name: Apply validated signal injection
+        run: python scripts/integrate_paper_signals.py
+
+      - name: Apply paper dashboard injection
+        run: python scripts/integrate_paper_dashboard.py
+
+      - name: Compile patched app and paper modules
+        run: python -m py_compile app.py signal_engine.py paper_router.py paper_portfolio.py paper_engine.py paper_execution.py
+
+      - name: Phase 5 portfolio and stress tests
+        run: PYTHONPATH="${GITHUB_WORKSPACE}:${PYTHONPATH}" python -m pytest -q tests/test_paper_portfolio.py tests/test_paper_strategy_runner.py tests/test_phase5_execution.py tests/test_phase5_stress.py
+
+      - name: Commit patched app
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet; then
+            echo "No app changes required."
+          else
+            git add app.py
+            git commit -m "Phase 5: add paper trading dashboard"
+            git push
+          fi
