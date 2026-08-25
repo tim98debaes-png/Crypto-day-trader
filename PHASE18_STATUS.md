@@ -1,6 +1,6 @@
 # Phase 18 — Candidate registry and controlled rollback
 
-Status: implemented
+Status: complete and CI-green
 
 Phase 18 adds a persistent, auditable registry for optimizer candidates. It records candidate versions, promotion decisions, the active candidate and rollback events.
 
@@ -13,4 +13,8 @@ Safety properties:
 - Registry writes are atomic.
 - The registry never places orders.
 
-Next: connect the registry to the Streamlit optimizer dashboard and paper session with visible active-version state and manual rollback.
+Validation:
+- Latest Phase 18 CI run #24: success.
+- Registry regression tests pass.
+
+Next: Phase 19 connects registry state to the Streamlit optimizer dashboard and paper session with visible active-version state and a manual rollback control.
