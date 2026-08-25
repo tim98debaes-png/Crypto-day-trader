@@ -1,1 +1,1 @@
-Phase 18 PR candidate.
+Phase 18 PR completed. CI-green. Candidate registry and controlled rollback are validated. Phase 19 follows with dashboard and paper-session integration.
