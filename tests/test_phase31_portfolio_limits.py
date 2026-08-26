@@ -14,13 +14,13 @@ def test_phase31_rejects_non_positive_capital(tmp_path):
         PaperPortfolio(capital=0, coins=["BTCUSDT"], persist=False, state_path=str(tmp_path / "s.json"))
 
 
+def test_phase31_rejects_negative_capital(tmp_path):
+    with pytest.raises(ValueError, match="capital must be positive"):
+        PaperPortfolio(capital=-100, coins=["BTCUSDT"], persist=False, state_path=str(tmp_path / "s.json"))
+
+
 def test_phase31_symbol_normalization_and_shared_allocation(tmp_path):
-    portfolio = PaperPortfolio(
-        capital=1000,
-        coins=["btcusdt", "ETHUSDT"],
-        persist=False,
-        state_path=str(tmp_path / "s.json"),
-    )
+    portfolio = PaperPortfolio(capital=1000, coins=["btcusdt", "ETHUSDT"], persist=False, state_path=str(tmp_path / "s.json"))
     btc = portfolio.account("btcusdt")
     eth = portfolio.account("ethusdt")
     assert portfolio.coins == ["BTCUSDT", "ETHUSDT"]
@@ -30,10 +30,6 @@ def test_phase31_symbol_normalization_and_shared_allocation(tmp_path):
 
 def test_phase31_invalid_risk_parameters_do_not_open(tmp_path):
     portfolio = PaperPortfolio(capital=1000, coins=["BTCUSDT"], persist=False, state_path=str(tmp_path / "s.json"))
-    result = portfolio.process(
-        "BTCUSDT", candidate(),
-        {"price": 100, "timestamp": "2026-08-26T10:00:00+00:00"},
-        {"long_score": 2, "short_score": 0, "stop_distance": 0, "rr": 2},
-    )
+    result = portfolio.process("BTCUSDT", candidate(), {"price": 100, "timestamp": "2026-08-26T10:00:00+00:00"}, {"long_score": 2, "short_score": 0, "stop_distance": 0, "rr": 2})
     assert result == {"action": "SKIP", "reason": "invalid_risk_parameters"}
     assert portfolio.account("BTCUSDT").position is None
