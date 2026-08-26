@@ -51,8 +51,11 @@ class BinancePublicFeed:
             raise RuntimeError(f"market feed returned no price for {symbol}: {payload!r}")
         try:
             price = float(payload["price"])
-        except (TypeError, ValueError) as exc:
-            raise RuntimeError(f"market feed returned invalid price for {symbol}") from exc
+        except (TypeError, ValueError):
+            # Preserve the historical API contract: malformed numeric data is
+            # a validation error, while transport/provider failures remain
+            # RuntimeError for failover diagnostics.
+            raise ValueError(f"market feed returned invalid price for {symbol}")
         if price <= 0:
             raise ValueError("market price must be positive")
         return MarketSnapshot(
