@@ -34,4 +34,7 @@ class BinancePublicFeed:
 
         if "price" not in payload:
             raise RuntimeError(f"market feed returned no price for {symbol}")
-        return MarketSnapshot(symbol=symbol, price=float(payload["price"]))
+        price = float(payload["price"])
+        if price <= 0:
+            raise ValueError("market price must be positive")
+        return MarketSnapshot(symbol=symbol, price=price)
