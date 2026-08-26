@@ -14,8 +14,6 @@ on:
 env:
   PYTHONPATH: ${{ github.workspace }}
 
-env_defaults: {}
-
 jobs:
   paper-session:
     runs-on: ubuntu-latest
