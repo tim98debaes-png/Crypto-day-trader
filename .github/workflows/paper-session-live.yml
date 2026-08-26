@@ -35,6 +35,8 @@ jobs:
           import tempfile
           from pathlib import Path
           from candidate_registry import CandidateRegistry
+          from paper_engine import PaperAccount
+          from paper_execution import PaperExecutionLoop
           from phase34_paper_session import run_bounded_paper_session
 
           with tempfile.TemporaryDirectory() as tmp:
@@ -56,27 +58,24 @@ jobs:
               if not decision.approved:
                   raise SystemExit(f"candidate promotion failed: {decision.reason}")
 
+              account = PaperAccount(capital=1000.0, fee_pct=0.0, slippage_pct=0.0)
+              loop = PaperExecutionLoop(account, registry=registry, persist_observability=False)
               result = run_bounded_paper_session(
                   symbol="BTCUSDT",
                   duration_seconds=900,
                   interval_seconds=15,
                   capital=1000.0,
-                  loop=None,
+                  loop=loop,
               )
-              # The runner's default loop uses its own registry, so the live run
-              # is intentionally a feed/execution safety smoke test with no
-              # external order capability. Persist the result for inspection.
-              Path("paper_session_result.json").write_text(
-                  json.dumps({
-                      "symbol": result.symbol,
-                      "samples": result.samples,
-                      "last_price": result.last_price,
-                      "errors": result.errors,
-                      "summary": result.summary,
-                  }, indent=2),
-                  encoding="utf-8",
-              )
-              print(json.dumps(json.loads(Path("paper_session_result.json").read_text()), indent=2))
+              payload = {
+                  "symbol": result.symbol,
+                  "samples": result.samples,
+                  "last_price": result.last_price,
+                  "errors": result.errors,
+                  "summary": result.summary,
+              }
+              Path("paper_session_result.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
+              print(json.dumps(payload, indent=2))
           PY
 
       - name: Upload paper session result
