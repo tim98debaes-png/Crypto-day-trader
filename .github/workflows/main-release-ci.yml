@@ -66,6 +66,7 @@ jobs:
           python -m pytest -q
           tests/test_phase32_dashboard.py
           tests/test_phase32_dashboard_integration.py
+          tests/test_phase32_dashboard_serialization.py
 
       - name: Full test suite
         run: python -m pytest -q
