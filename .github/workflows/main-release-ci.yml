@@ -62,7 +62,10 @@ jobs:
           tests/test_phase31_market_feed_resilience.py
 
       - name: Phase 32 dashboard validation
-        run: python -m pytest -q tests/test_phase32_dashboard.py
+        run: >-
+          python -m pytest -q
+          tests/test_phase32_dashboard.py
+          tests/test_phase32_dashboard_integration.py
 
       - name: Full test suite
         run: python -m pytest -q
