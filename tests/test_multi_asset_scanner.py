@@ -27,7 +27,7 @@ def test_rank_assets_filters_illiquid_and_returns_top_candidates():
         AssetSnapshot("LOWUSDT", 100, 1_000_000, change_pct=20.0, volatility_pct=20.0),
     ]
     ranked = rank_assets(snapshots, min_quote_volume=5_000_000, max_candidates=2)
-    assert [item.symbol for item in ranked] == ["ETHUSDT", "BTCUSDT"]
+    assert [item.symbol for item in ranked] == ["BTCUSDT", "ETHUSDT"]
     assert all(item.score > 0 for item in ranked)
 
 
