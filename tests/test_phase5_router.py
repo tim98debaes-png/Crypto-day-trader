@@ -15,13 +15,13 @@ def good_candidate():
 
 
 def test_candidate_gate_accepts_production_optimizer_candidate():
-    assert candidate_is_approved(good_candidate()) is True
+    assert candidate_is_approved(good_candidate(), mode="production") is True
 
 
-def test_candidate_gate_blocks_weak_stability():
+def test_candidate_gate_blocks_weak_stability_in_production():
     candidate = good_candidate()
     candidate["Stability"] = 59
-    assert candidate_is_approved(candidate) is False
+    assert candidate_is_approved(candidate, mode="production") is False
 
 
 def test_router_opens_only_approved_candidate():
