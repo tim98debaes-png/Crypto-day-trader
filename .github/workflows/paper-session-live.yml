@@ -1,18 +1,25 @@
 name: Bounded live-data paper session
 
 on:
+  workflow_dispatch:
+    inputs:
+      duration_minutes:
+        description: "Paper-session duration in minutes"
+        required: false
+        default: "60"
   push:
     branches:
       - main
-  workflow_dispatch:
 
 env:
   PYTHONPATH: ${{ github.workspace }}
 
+env_defaults: {}
+
 jobs:
   paper-session:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 75
     permissions:
       contents: read
 
@@ -31,12 +38,10 @@ jobs:
       - name: Run public feed diagnostic with failover
         run: |
           python - <<'PY'
-          import json
-          import traceback
+          import json, traceback
           from coinbase_public_feed import CoinbasePublicFeed
           from market_feed import BinancePublicFeed
           from market_feed_failover import PublicFeedFailover
-
           feed = PublicFeedFailover([
               ("binance", BinancePublicFeed(timeout=10)),
               ("coinbase", CoinbasePublicFeed(timeout=10)),
@@ -44,20 +49,13 @@ jobs:
           result = {"symbol": "BTCUSDT", "ok": False}
           try:
               snapshot = feed.snapshot("BTCUSDT")
-              result.update({
-                  "ok": True,
-                  "provider": feed.last_provider,
-                  "price": snapshot.price,
-                  "timestamp": snapshot.timestamp,
-                  "failures_before_success": [f.__dict__ for f in feed.failures],
-              })
+              result.update({"ok": True, "provider": feed.last_provider,
+                             "price": snapshot.price, "timestamp": snapshot.timestamp,
+                             "failures_before_success": [f.__dict__ for f in feed.failures]})
           except Exception as exc:
-              result.update({
-                  "error_type": type(exc).__name__,
-                  "error": str(exc),
-                  "failures": [f.__dict__ for f in feed.failures],
-                  "traceback": traceback.format_exc(),
-              })
+              result.update({"error_type": type(exc).__name__, "error": str(exc),
+                             "failures": [f.__dict__ for f in feed.failures],
+                             "traceback": traceback.format_exc()})
           print(json.dumps(result, indent=2))
           with open("feed_diagnostic.json", "w", encoding="utf-8") as fh:
               json.dump(result, fh, indent=2)
@@ -66,10 +64,11 @@ jobs:
           PY
 
       - name: Run bounded live-market-data paper session
+        env:
+          DURATION_MINUTES: ${{ github.event.inputs.duration_minutes || '60' }}
         run: |
           python - <<'PY'
-          import json
-          import tempfile
+          import json, os, tempfile
           from pathlib import Path
           from candidate_registry import CandidateRegistry
           from paper_engine import PaperAccount
@@ -79,13 +78,15 @@ jobs:
           from market_feed import BinancePublicFeed
           from market_feed_failover import PublicFeedFailover
 
+          duration_minutes = int(os.environ.get("DURATION_MINUTES", "60"))
+          if not 1 <= duration_minutes <= 60:
+              raise SystemExit("duration_minutes must be between 1 and 60")
+
           with tempfile.TemporaryDirectory() as tmp:
               registry = CandidateRegistry(Path(tmp) / "registry.json")
-              candidate = {
-                  "Status": "ROBUST", "Stability": 75, "OOS PF": 1.5,
-                  "OOS %": 12, "OOS trades": 20, "OOS DD": -8, "MC P05 %": -2,
-                  "Direction": "LONG", "RR": 2.0, "symbol": "BTCUSDT",
-              }
+              candidate = {"Status": "ROBUST", "Stability": 75, "OOS PF": 1.5,
+                           "OOS %": 12, "OOS trades": 20, "OOS DD": -8, "MC P05 %": -2,
+                           "Direction": "LONG", "RR": 2.0, "symbol": "BTCUSDT"}
               candidate_id = registry.register(candidate)
               decision = registry.promote(candidate_id, human_approved=True)
               if not decision.approved:
@@ -98,15 +99,14 @@ jobs:
                   ("coinbase", CoinbasePublicFeed(timeout=10)),
               ])
               result = run_bounded_paper_session(
-                  symbol="BTCUSDT", duration_seconds=900, interval_seconds=15,
-                  capital=1000.0, loop=loop, feed=feed,
+                  symbol="BTCUSDT", duration_seconds=duration_minutes * 60,
+                  interval_seconds=15, capital=1000.0, loop=loop, feed=feed,
               )
-              payload = {
-                  "symbol": result.symbol, "samples": result.samples,
-                  "last_price": result.last_price, "errors": result.errors,
-                  "provider": feed.last_provider, "feed_failures": [f.__dict__ for f in feed.failures],
-                  "summary": result.summary,
-              }
+              payload = {"symbol": result.symbol, "duration_minutes": duration_minutes,
+                         "samples": result.samples, "last_price": result.last_price,
+                         "errors": result.errors, "provider": feed.last_provider,
+                         "feed_failures": [f.__dict__ for f in feed.failures],
+                         "summary": result.summary}
               Path("paper_session_result.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
               print(json.dumps(payload, indent=2))
           PY
