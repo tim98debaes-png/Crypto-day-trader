@@ -2,12 +2,14 @@
 
 Simulation only: this module never places exchange orders.
 It turns validated strategy signals into a deterministic paper position,
-with fees, slippage, risk sizing, daily loss protection and an audit log.
+with fees, slippage, risk sizing, daily loss protection, runtime safety and an audit log.
 """
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Optional
+
+from phase34_runtime_guard import evaluate_entry_guard
 
 
 @dataclass
@@ -87,7 +89,12 @@ class PaperAccount:
         stop_distance: float,
         rr: float,
         timestamp: Optional[str] = None,
+        *,
+        strategy_ready: bool = True,
+        heartbeat_age_seconds: float | None = 0.0,
+        paper_mode: bool = True,
     ) -> PaperPosition:
+        """Open a paper position only when all runtime safety gates pass."""
         timestamp = timestamp or datetime.now(timezone.utc).isoformat()
         self._roll_day(timestamp)
 
@@ -96,6 +103,20 @@ class PaperAccount:
             raise ValueError("direction must be LONG or SHORT")
         if price <= 0 or stop_distance <= 0 or rr <= 0:
             raise ValueError("price, stop_distance and rr must be positive")
+
+        guard = evaluate_entry_guard(
+            paper_mode=paper_mode,
+            strategy_ready=strategy_ready,
+            heartbeat_age_seconds=heartbeat_age_seconds,
+            drawdown_pct=self.daily_loss_pct(price),
+            max_drawdown_pct=20.0,
+        )
+        if not guard.allowed:
+            raise RuntimeError(
+                "paper account is not allowed to open a position: "
+                + ",".join(guard.reasons)
+            )
+
         if not self.can_open(price):
             raise RuntimeError("paper account is not allowed to open a position")
 
