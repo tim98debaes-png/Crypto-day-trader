@@ -28,28 +28,41 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Run single feed diagnostic
+      - name: Run public feed diagnostic with failover
         run: |
           python - <<'PY'
           import json
           import traceback
+          from coinbase_public_feed import CoinbasePublicFeed
           from market_feed import BinancePublicFeed
+          from market_feed_failover import PublicFeedFailover
 
+          feed = PublicFeedFailover([
+              ("binance", BinancePublicFeed(timeout=10)),
+              ("coinbase", CoinbasePublicFeed(timeout=10)),
+          ])
           result = {"symbol": "BTCUSDT", "ok": False}
           try:
-              snapshot = BinancePublicFeed(timeout=10).snapshot("BTCUSDT")
-              result.update({"ok": True, "price": snapshot.price, "timestamp": snapshot.timestamp})
+              snapshot = feed.snapshot("BTCUSDT")
+              result.update({
+                  "ok": True,
+                  "provider": feed.last_provider,
+                  "price": snapshot.price,
+                  "timestamp": snapshot.timestamp,
+                  "failures_before_success": [f.__dict__ for f in feed.failures],
+              })
           except Exception as exc:
               result.update({
                   "error_type": type(exc).__name__,
                   "error": str(exc),
+                  "failures": [f.__dict__ for f in feed.failures],
                   "traceback": traceback.format_exc(),
               })
           print(json.dumps(result, indent=2))
           with open("feed_diagnostic.json", "w", encoding="utf-8") as fh:
               json.dump(result, fh, indent=2)
           if not result["ok"]:
-              raise SystemExit("public market feed diagnostic failed")
+              raise SystemExit("all public market feeds failed")
           PY
 
       - name: Run bounded live-market-data paper session
@@ -62,20 +75,16 @@ jobs:
           from paper_engine import PaperAccount
           from paper_execution import PaperExecutionLoop
           from phase34_paper_session import run_bounded_paper_session
+          from coinbase_public_feed import CoinbasePublicFeed
+          from market_feed import BinancePublicFeed
+          from market_feed_failover import PublicFeedFailover
 
           with tempfile.TemporaryDirectory() as tmp:
               registry = CandidateRegistry(Path(tmp) / "registry.json")
               candidate = {
-                  "Status": "ROBUST",
-                  "Stability": 75,
-                  "OOS PF": 1.5,
-                  "OOS %": 12,
-                  "OOS trades": 20,
-                  "OOS DD": -8,
-                  "MC P05 %": -2,
-                  "Direction": "LONG",
-                  "RR": 2.0,
-                  "symbol": "BTCUSDT",
+                  "Status": "ROBUST", "Stability": 75, "OOS PF": 1.5,
+                  "OOS %": 12, "OOS trades": 20, "OOS DD": -8, "MC P05 %": -2,
+                  "Direction": "LONG", "RR": 2.0, "symbol": "BTCUSDT",
               }
               candidate_id = registry.register(candidate)
               decision = registry.promote(candidate_id, human_approved=True)
@@ -84,18 +93,18 @@ jobs:
 
               account = PaperAccount(capital=1000.0, fee_pct=0.0, slippage_pct=0.0)
               loop = PaperExecutionLoop(account, registry=registry, persist_observability=False)
+              feed = PublicFeedFailover([
+                  ("binance", BinancePublicFeed(timeout=10)),
+                  ("coinbase", CoinbasePublicFeed(timeout=10)),
+              ])
               result = run_bounded_paper_session(
-                  symbol="BTCUSDT",
-                  duration_seconds=900,
-                  interval_seconds=15,
-                  capital=1000.0,
-                  loop=loop,
+                  symbol="BTCUSDT", duration_seconds=900, interval_seconds=15,
+                  capital=1000.0, loop=loop, feed=feed,
               )
               payload = {
-                  "symbol": result.symbol,
-                  "samples": result.samples,
-                  "last_price": result.last_price,
-                  "errors": result.errors,
+                  "symbol": result.symbol, "samples": result.samples,
+                  "last_price": result.last_price, "errors": result.errors,
+                  "provider": feed.last_provider, "feed_failures": [f.__dict__ for f in feed.failures],
                   "summary": result.summary,
               }
               Path("paper_session_result.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
