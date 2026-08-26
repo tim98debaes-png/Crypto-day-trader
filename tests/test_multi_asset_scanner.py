@@ -28,6 +28,8 @@ def test_rank_assets_filters_illiquid_and_returns_top_candidates():
     ]
     ranked = rank_assets(snapshots, min_quote_volume=5_000_000, max_candidates=2)
     assert [item.symbol for item in ranked] == ["BTCUSDT", "ETHUSDT"]
+    assert ranked[0].score == 56.5
+    assert ranked[1].score == 42.5
     assert all(item.score > 0 for item in ranked)
 
 
