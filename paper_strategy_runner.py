@@ -11,7 +11,8 @@ class PaperStrategyRunner:
     def process(self, market: dict, candidate: dict, indicators: dict) -> dict:
         # Position management must always run, even when the current candle
         # has no fresh entry signal. Otherwise SL/TP could be skipped.
-        if self.execution_loop.account.position is not None:
+        symbol = str(market["symbol"])
+        if symbol in self.execution_loop.account.positions:
             return self.execution_loop.on_market(
                 dict(market),
                 candidate=candidate,
@@ -19,7 +20,7 @@ class PaperStrategyRunner:
 
         signal = generate_signal(candidate, indicators)
         if signal.action == "WAIT":
-            self.execution_loop._record_equity(float(market["price"]))
+            self.execution_loop._record_equity(float(market["price"]), symbol)
             return {"action": "WAIT", "reason": signal.reason}
 
         execution_market = dict(market)
