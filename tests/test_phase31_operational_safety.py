@@ -5,10 +5,24 @@ from datetime import datetime, timedelta, timezone
 from candidate_registry import CandidateRegistry
 
 
+APPROVED_CANDIDATE = {
+    "Coin": "BTCUSDT",
+    "Direction": "LONG",
+    "Status": "ROBUST",
+    "OOS %": 5.0,
+    "OOS PF": 1.50,
+    "OOS trades": 30,
+    "OOS DD": -10.0,
+    "Stability": 80.0,
+    "MC P05 %": 0.0,
+}
+
+
 def test_phase31_registry_snapshot_is_safe_after_deactivation(tmp_path):
     registry = CandidateRegistry(tmp_path / "registry.json")
-    cid = registry.register({"Coin": "BTCUSDT", "Direction": "LONG", "Status": "ROBUST"})
-    registry.promote(cid, human_approved=True)
+    cid = registry.register(APPROVED_CANDIDATE)
+    decision = registry.promote(cid, human_approved=True)
+    assert decision.approved
     assert registry.active()["id"] == cid
 
     registry.deactivate()
