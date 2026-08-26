@@ -1,7 +1,8 @@
 """Multi-asset crypto market scanner for paper trading.
 
-The scanner uses a curated liquid universe, applies lightweight liquidity and
-volatility gates, and ranks candidates without placing orders.
+The scanner uses a curated liquid universe, keeps a conservative liquidity
+floor, and deliberately gives more weight to current momentum/volatility in
+research mode so the experiment does not over-filter active opportunities.
 """
 from __future__ import annotations
 
@@ -21,6 +22,12 @@ DEFAULT_LIQUID_UNIVERSE: tuple[str, ...] = (
     "TIAUSDT", "JUPUSDT", "PEPEUSDT", "WIFUSDT", "FLOKIUSDT",
     "BONKUSDT", "RENDERUSDT", "TAOUSDT", "ENAUSDT", "PYTHUSDT",
 )
+
+RESEARCH_MIN_QUOTE_VOLUME = 5_000_000.0
+RESEARCH_MAX_CANDIDATES = 10
+LIQUIDITY_WEIGHT = 0.20
+VOLATILITY_WEIGHT = 0.40
+MOMENTUM_WEIGHT = 0.40
 
 
 @dataclass(frozen=True)
@@ -51,19 +58,24 @@ def liquid_universe(symbols: Iterable[str] | None = None, *, max_assets: int = 5
         normalized = str(symbol).strip().upper()
         if not normalized or normalized in seen or not normalized.endswith("USDT"):
             continue
-        seen.add(normalized); result.append(normalized)
+        seen.add(normalized)
+        result.append(normalized)
         if len(result) >= max_assets:
             break
     return tuple(result)
 
 
-def rank_assets(snapshots: Sequence[AssetSnapshot], *, min_quote_volume: float = 5_000_000.0,
-                max_candidates: int = 5) -> list[RankedCandidate]:
-    """Filter illiquid assets and rank liquid, moving opportunities.
+def rank_assets(
+    snapshots: Sequence[AssetSnapshot],
+    *,
+    min_quote_volume: float = RESEARCH_MIN_QUOTE_VOLUME,
+    max_candidates: int = RESEARCH_MAX_CANDIDATES,
+) -> list[RankedCandidate]:
+    """Filter illiquid assets and rank liquid, moving research opportunities.
 
-    Liquidity remains a hard gate and contributes to ranking, but it no longer
-    overwhelms short-term momentum/volatility. Scores are normalized around
-    realistic intraday moves rather than raw percentage values.
+    The $5M liquidity floor is retained. Momentum and volatility each receive
+    40% of the ranking while liquidity receives 20%, increasing candidate
+    breadth without opening the universe to thinly traded assets.
     """
     if min_quote_volume < 0:
         raise ValueError("min_quote_volume must be non-negative")
@@ -78,8 +90,19 @@ def rank_assets(snapshots: Sequence[AssetSnapshot], *, min_quote_volume: float =
         liquidity = min(100.0, 100.0 * item.quote_volume / max_volume)
         volatility = min(100.0, max(0.0, abs(item.volatility_pct) / 0.50 * 100.0))
         momentum = min(100.0, max(0.0, abs(item.change_pct) / 1.00 * 100.0))
-        score = 0.30 * liquidity + 0.30 * volatility + 0.40 * momentum
-        ranked.append(RankedCandidate(item.symbol, round(score, 4), round(liquidity, 4),
-                                      round(volatility, 4), round(momentum, 4)))
+        score = (
+            LIQUIDITY_WEIGHT * liquidity
+            + VOLATILITY_WEIGHT * volatility
+            + MOMENTUM_WEIGHT * momentum
+        )
+        ranked.append(
+            RankedCandidate(
+                item.symbol,
+                round(score, 4),
+                round(liquidity, 4),
+                round(volatility, 4),
+                round(momentum, 4),
+            )
+        )
     ranked.sort(key=lambda item: (-item.score, item.symbol))
     return ranked[:max_candidates]
