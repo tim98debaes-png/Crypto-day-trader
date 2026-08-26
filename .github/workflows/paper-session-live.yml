@@ -28,6 +28,30 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Run single feed diagnostic
+        run: |
+          python - <<'PY'
+          import json
+          import traceback
+          from market_feed import BinancePublicFeed
+
+          result = {"symbol": "BTCUSDT", "ok": False}
+          try:
+              snapshot = BinancePublicFeed(timeout=10).snapshot("BTCUSDT")
+              result.update({"ok": True, "price": snapshot.price, "timestamp": snapshot.timestamp})
+          except Exception as exc:
+              result.update({
+                  "error_type": type(exc).__name__,
+                  "error": str(exc),
+                  "traceback": traceback.format_exc(),
+              })
+          print(json.dumps(result, indent=2))
+          with open("feed_diagnostic.json", "w", encoding="utf-8") as fh:
+              json.dump(result, fh, indent=2)
+          if not result["ok"]:
+              raise SystemExit("public market feed diagnostic failed")
+          PY
+
       - name: Run bounded live-market-data paper session
         run: |
           python - <<'PY'
@@ -78,9 +102,12 @@ jobs:
               print(json.dumps(payload, indent=2))
           PY
 
-      - name: Upload paper session result
+      - name: Upload diagnostics and paper session result
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: bounded-live-paper-session
-          path: paper_session_result.json
-          if-no-files-found: error
+          path: |
+            feed_diagnostic.json
+            paper_session_result.json
+          if-no-files-found: warn
