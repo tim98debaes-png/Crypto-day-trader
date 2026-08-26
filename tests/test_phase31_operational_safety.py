@@ -9,10 +9,10 @@ def test_phase31_registry_snapshot_is_safe_after_deactivation(tmp_path):
     registry = CandidateRegistry(tmp_path / "registry.json")
     cid = registry.register({"Coin": "BTCUSDT", "Direction": "LONG", "Status": "ROBUST"})
     registry.promote(cid, human_approved=True)
-    assert registry.active_candidate()["id"] == cid
+    assert registry.active()["id"] == cid
 
     registry.deactivate()
-    assert registry.active_candidate() is None
+    assert registry.active() is None
 
 
 def test_phase31_stale_heartbeat_is_detectable():
