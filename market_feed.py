@@ -17,10 +17,11 @@ class MarketSnapshot:
     symbol: str
     price: float
     timestamp: Optional[str] = None
+    quote_volume: float = 0.0
 
 
 class BinancePublicFeed:
-    BASE_URL = "https://api.binance.com/api/v3/ticker/price"
+    BASE_URL = "https://api.binance.com/api/v3/ticker/24hr"
 
     def __init__(self, timeout: float = 10.0, base_url: Optional[str] = None):
         self.timeout = timeout
@@ -30,10 +31,7 @@ class BinancePublicFeed:
         symbol = symbol.upper()
         request = Request(
             f"{self.base_url}?symbol={symbol}",
-            headers={
-                "User-Agent": "CryptoDayTrader-Paper/1.0",
-                "Accept": "application/json",
-            },
+            headers={"User-Agent": "CryptoDayTrader-Paper/1.0", "Accept": "application/json"},
         )
         try:
             with urlopen(request, timeout=self.timeout) as response:
@@ -47,19 +45,15 @@ class BinancePublicFeed:
         except json.JSONDecodeError as exc:
             raise RuntimeError(f"market feed returned invalid JSON for {symbol}") from exc
 
-        if not isinstance(payload, dict) or "price" not in payload:
+        if not isinstance(payload, dict) or "lastPrice" not in payload:
             raise RuntimeError(f"market feed returned no price for {symbol}: {payload!r}")
         try:
-            price = float(payload["price"])
+            price = float(payload["lastPrice"])
+            quote_volume = float(payload.get("quoteVolume", 0.0))
         except (TypeError, ValueError):
-            # Preserve the historical API contract: malformed numeric data is
-            # a validation error, while transport/provider failures remain
-            # RuntimeError for failover diagnostics.
-            raise ValueError(f"market feed returned invalid price for {symbol}")
+            raise ValueError(f"market feed returned invalid numeric data for {symbol}")
         if price <= 0:
             raise ValueError("market price must be positive")
-        return MarketSnapshot(
-            symbol=symbol,
-            price=price,
-            timestamp=datetime.now(timezone.utc).isoformat(),
-        )
+        return MarketSnapshot(symbol=symbol, price=price,
+                              timestamp=datetime.now(timezone.utc).isoformat(),
+                              quote_volume=max(0.0, quote_volume))
