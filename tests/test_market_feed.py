@@ -9,5 +9,5 @@ def test_market_snapshot_is_normalized():
 
 def test_feed_has_read_only_public_endpoint():
     from market_feed import BinancePublicFeed
-    assert BinancePublicFeed.BASE_URL.endswith("/api/v3/ticker/price")
+    assert BinancePublicFeed.BASE_URL.endswith("/api/v3/ticker/24hr")
     assert "order" not in BinancePublicFeed.BASE_URL.lower()
