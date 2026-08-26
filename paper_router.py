@@ -3,6 +3,28 @@
 from paper_engine import PaperAccount
 
 
+# Research/paper mode deliberately uses softer validation than the eventual
+# production gate. The production values remain unchanged so experimentation
+# can increase candidate breadth without weakening the final safety bar.
+RESEARCH_GATES = {
+    "min_oos_return": 0.0,
+    "min_oos_pf": 1.05,
+    "min_oos_trades": 5.0,
+    "max_oos_dd": -25.0,
+    "min_stability": 50.0,
+    "min_mc_p05": -15.0,
+}
+
+PRODUCTION_GATES = {
+    "min_oos_return": 0.0,
+    "min_oos_pf": 1.20,
+    "min_oos_trades": 15.0,
+    "max_oos_dd": -20.0,
+    "min_stability": 60.0,
+    "min_mc_p05": -10.0,
+}
+
+
 def _number(candidate: dict, *keys, default=0.0):
     for key in keys:
         value = candidate.get(key)
@@ -21,18 +43,13 @@ def _status(candidate: dict) -> str:
     return str(candidate.get("Status", candidate.get("status", ""))).upper().strip()
 
 
-def candidate_is_approved(candidate: dict) -> bool:
-    """Match the paper gate to the optimizer's actual output contract.
-
-    strategy_discovery returns TRADE, while optimize_coin normalizes a passing
-    candidate to ROBUST.  Both are valid here.  The real optimizer exposes
-    OOS PF, OOS %, OOS trades, OOS DD, Stability and MC P05 %; there is no
-    genuine Monte-Carlo profit-probability field, so we must not fabricate one.
-    """
+def candidate_is_approved(candidate: dict, *, mode: str = "research") -> bool:
+    """Validate a candidate using research/paper or production thresholds."""
     status = _status(candidate)
     if status not in {"TRADE", "ROBUST"}:
         return False
 
+    gates = PRODUCTION_GATES if str(mode).lower().strip() == "production" else RESEARCH_GATES
     oos_return = _number(candidate, "OOS %", "OOS Return", "return", default=-999.0)
     oos_pf = _number(candidate, "OOS PF", "OOS Profit Factor", "pf", default=0.0)
     oos_trades = _number(candidate, "OOS trades", "OOS Trades", "trades", default=0.0)
@@ -40,20 +57,19 @@ def candidate_is_approved(candidate: dict) -> bool:
     stability = _number(candidate, "Stability", "Neighbour Stability", default=-1.0)
     mc_p05 = _number(candidate, "MC P05 %", "MC P05", default=-999.0)
 
-    # Exact Phase 3/4 production thresholds from candidate_status().
     return (
-        oos_return > 0.0
-        and oos_pf >= 1.20
-        and oos_trades >= 15.0
-        and oos_dd > -20.0
-        and stability >= 60.0
-        and mc_p05 > -10.0
+        oos_return > gates["min_oos_return"]
+        and oos_pf >= gates["min_oos_pf"]
+        and oos_trades >= gates["min_oos_trades"]
+        and oos_dd > gates["max_oos_dd"]
+        and stability >= gates["min_stability"]
+        and mc_p05 > gates["min_mc_p05"]
     )
 
 
-def route_candidate(account: PaperAccount, candidate: dict, market: dict):
-    """Open one paper position only when every production gate passes."""
-    if not candidate_is_approved(candidate):
+def route_candidate(account: PaperAccount, candidate: dict, market: dict, *, mode: str = "research"):
+    """Open one paper position only when the selected validation gate passes."""
+    if not candidate_is_approved(candidate, mode=mode):
         return {"action": "BLOCK", "reason": "quality_gates_failed"}
 
     return {
