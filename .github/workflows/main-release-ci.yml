@@ -88,3 +88,5 @@ jobs:
 
       - name: Full test suite
         run: python -m pytest -q
+
+      # Keep the complete validation gate on every main push.
