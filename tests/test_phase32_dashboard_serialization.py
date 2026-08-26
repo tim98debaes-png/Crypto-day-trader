@@ -16,6 +16,7 @@ def test_phase32_snapshot_serializes_stable_primitives_only():
     assert set(data) == {
         "status",
         "active_candidate_id",
+        "active_candidate_status",
         "open_positions",
         "equity",
         "drawdown_pct",
@@ -36,5 +37,7 @@ def test_phase32_degraded_snapshot_has_no_false_entry_permission():
         allow_new_entries=False,
         heartbeat_age_seconds=301,
     )
-    assert snapshot.as_dict()["allow_new_entries"] is False
+    data = snapshot.as_dict()
+    assert data["allow_new_entries"] is False
+    assert data["active_candidate_status"] is None
     assert snapshot.status == "DEGRADED"
