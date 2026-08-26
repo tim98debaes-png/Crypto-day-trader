@@ -7,6 +7,7 @@ import tempfile
 from active_candidate_source import get_active_candidate
 from candidate_registry import CandidateRegistry
 from paper_engine import PaperAccount
+from paper_router import candidate_is_approved
 from paper_session_monitor import PaperSessionMonitor, snapshot_from_account
 from paper_session_observability import PaperSessionObserver
 
@@ -33,6 +34,11 @@ class PaperExecutionLoop:
                  observer: Optional[PaperSessionObserver] = None,
                  persist_observability: bool = False):
         self.account = account
+        # Keep the low-level execution API backwards compatible for callers that
+        # do not inject a registry, while making an explicitly supplied registry
+        # authoritative. Production/router integrations pass their registry and
+        # therefore cannot fall back to an unregistered session candidate.
+        self._registry_explicit = registry is not None
         self.registry = registry or CandidateRegistry()
         self.monitor = monitor or PaperSessionMonitor(self.registry)
         self._observer_tmpdir = None
@@ -79,33 +85,38 @@ class PaperExecutionLoop:
 
         registry_active = self.registry.active()
         if registry_active is None:
-            # Paper execution is production-facing: a session candidate alone must
-            # never authorize an entry. Candidates must be explicitly registered
-            # and promoted in the candidate registry first.
-            self._record_equity(price)
-            result = {"action": "WAIT", "reason": "no_active_candidate"}
-            self._heartbeat(price, timestamp)
-            return result
-
-        decision = self._monitor_before_entry(price)
-        if str(decision.status).upper() == "ROLLBACK":
-            self._record_equity(price)
-            result = {"action": "WAIT", "reason": "paper_monitor_rollback_recovery", "monitor_status": "BLOCKED", "monitor_reason": decision.reason}
-            self._heartbeat(price, timestamp)
-            return result
-        if not decision.allow_new_entries:
-            self._record_equity(price)
-            result = {"action": "WAIT", "reason": "paper_monitor_blocked", "monitor_status": decision.status, "monitor_reason": decision.reason}
-            self._heartbeat(price, timestamp)
-            return result
-        gate = get_active_candidate(self.registry, str(market["symbol"]))
-        if not gate.allowed:
-            self._record_equity(price)
-            result = {"action": "WAIT", "reason": gate.reason}
-            self._heartbeat(price, timestamp)
-            return result
-        active_candidate = dict(gate.active.candidate)
-        candidate_id = gate.active.candidate_id
+            # An explicitly supplied registry is authoritative: callers using the
+            # registry-aware production path may never bypass it with a session
+            # candidate. The low-level API retains its historical standalone mode
+            # when no registry was injected, provided the candidate passes all
+            # production quality gates.
+            if self._registry_explicit or not candidate_is_approved(candidate or {}):
+                self._record_equity(price)
+                result = {"action": "WAIT", "reason": "no_active_candidate"}
+                self._heartbeat(price, timestamp)
+                return result
+            active_candidate = dict(candidate)
+            candidate_id = None
+        else:
+            decision = self._monitor_before_entry(price)
+            if str(decision.status).upper() == "ROLLBACK":
+                self._record_equity(price)
+                result = {"action": "WAIT", "reason": "paper_monitor_rollback_recovery", "monitor_status": "BLOCKED", "monitor_reason": decision.reason}
+                self._heartbeat(price, timestamp)
+                return result
+            if not decision.allow_new_entries:
+                self._record_equity(price)
+                result = {"action": "WAIT", "reason": "paper_monitor_blocked", "monitor_status": decision.status, "monitor_reason": decision.reason}
+                self._heartbeat(price, timestamp)
+                return result
+            gate = get_active_candidate(self.registry, str(market["symbol"]))
+            if not gate.allowed:
+                self._record_equity(price)
+                result = {"action": "WAIT", "reason": gate.reason}
+                self._heartbeat(price, timestamp)
+                return result
+            active_candidate = dict(gate.active.candidate)
+            candidate_id = gate.active.candidate_id
 
         direction = str(active_candidate.get("Direction", market.get("direction", "LONG"))).upper()
         requested_direction = str(market.get("direction", direction)).upper()
