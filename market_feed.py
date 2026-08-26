@@ -45,15 +45,24 @@ class BinancePublicFeed:
         except json.JSONDecodeError as exc:
             raise RuntimeError(f"market feed returned invalid JSON for {symbol}") from exc
 
-        if not isinstance(payload, dict) or "lastPrice" not in payload:
+        if not isinstance(payload, dict):
+            raise RuntimeError(f"market feed returned invalid payload for {symbol}: {payload!r}")
+
+        # Binance /ticker/24hr uses lastPrice. The price fallback keeps the
+        # adapter compatible with existing mocked/legacy feed responses.
+        raw_price = payload.get("lastPrice", payload.get("price"))
+        if raw_price is None:
             raise RuntimeError(f"market feed returned no price for {symbol}: {payload!r}")
         try:
-            price = float(payload["lastPrice"])
+            price = float(raw_price)
             quote_volume = float(payload.get("quoteVolume", 0.0))
         except (TypeError, ValueError):
             raise ValueError(f"market feed returned invalid numeric data for {symbol}")
         if price <= 0:
             raise ValueError("market price must be positive")
-        return MarketSnapshot(symbol=symbol, price=price,
-                              timestamp=datetime.now(timezone.utc).isoformat(),
-                              quote_volume=max(0.0, quote_volume))
+        return MarketSnapshot(
+            symbol=symbol,
+            price=price,
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            quote_volume=max(0.0, quote_volume),
+        )
