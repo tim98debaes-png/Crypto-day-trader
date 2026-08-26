@@ -1,8 +1,8 @@
 """Multi-asset paper portfolio aggregation.
 
 Simulation only. The configured capital is shared across selected symbols.
-Each symbol has its own paper account, and the underlying account engine now
-supports multiple positions without an artificial portfolio-wide cap.
+Paper state can be persisted atomically while running inside Streamlit so a
+process restart can resume the same paper session.
 """
 
 from dataclasses import dataclass, field
@@ -13,6 +13,7 @@ from paper_state import default_path, load, save
 
 
 def _streamlit_context_active() -> bool:
+    """Return True only when constructed from an active Streamlit run."""
     try:
         from streamlit.runtime.scriptrunner import get_script_run_ctx
         return get_script_run_ctx() is not None
@@ -22,6 +23,7 @@ def _streamlit_context_active() -> bool:
 
 @dataclass
 class PaperPortfolio:
+    # `capital` is total portfolio capital, not capital per coin.
     capital: float = 1000.0
     risk_pct: float = 0.5
     fee_pct: float = 0.1
@@ -62,7 +64,9 @@ class PaperPortfolio:
 
     def _allocation(self) -> float:
         count = len(self.coins)
-        return self.capital / count if count > 0 else self.capital
+        if count <= 0:
+            return self.capital
+        return self.capital / count
 
     def account(self, symbol: str) -> PaperAccount:
         symbol = symbol.upper()
@@ -82,20 +86,8 @@ class PaperPortfolio:
         return self.accounts[symbol]
 
     @staticmethod
-    def _position_dict(position: PaperPosition) -> dict:
-        return {
-            "symbol": position.symbol,
-            "direction": position.direction,
-            "entry_price": position.entry_price,
-            "quantity": position.quantity,
-            "stop_price": position.stop_price,
-            "target_price": position.target_price,
-            "opened_at": position.opened_at,
-            "entry_fee": position.entry_fee,
-        }
-
-    @classmethod
-    def _account_to_dict(cls, account: PaperAccount) -> dict:
+    def _account_to_dict(account: PaperAccount) -> dict:
+        position = account.position
         return {
             "capital": account.capital,
             "cash": account.cash,
@@ -106,8 +98,16 @@ class PaperPortfolio:
             "day_start_equity": account.day_start_equity,
             "current_day": account.current_day,
             "audit_log": list(account.audit_log[-10000:]),
-            "positions": [cls._position_dict(position) for position in account.positions.values()],
-            "last_prices": dict(account.last_prices),
+            "position": None if position is None else {
+                "symbol": position.symbol,
+                "direction": position.direction,
+                "entry_price": position.entry_price,
+                "quantity": position.quantity,
+                "stop_price": position.stop_price,
+                "target_price": position.target_price,
+                "opened_at": position.opened_at,
+                "entry_fee": position.entry_fee,
+            },
         }
 
     @staticmethod
@@ -123,27 +123,27 @@ class PaperPortfolio:
             current_day=data.get("current_day"),
             audit_log=list(data.get("audit_log", [])),
         )
-        account.last_prices = {str(k): float(v) for k, v in (data.get("last_prices") or {}).items()}
-        positions = data.get("positions")
-        if not isinstance(positions, list):
-            # Backward compatibility with state files written by the old engine.
-            legacy = data.get("position")
-            positions = [legacy] if isinstance(legacy, dict) else []
-        for item in positions:
-            if not isinstance(item, dict):
-                continue
-            position = PaperPosition(
-                symbol=str(item["symbol"]), direction=str(item["direction"]),
-                entry_price=float(item["entry_price"]), quantity=float(item["quantity"]),
-                stop_price=float(item["stop_price"]), target_price=float(item["target_price"]),
-                opened_at=str(item["opened_at"]), entry_fee=float(item.get("entry_fee", 0.0)),
+        position = data.get("position")
+        if isinstance(position, dict):
+            restored = PaperPosition(
+                symbol=str(position["symbol"]),
+                direction=str(position["direction"]),
+                entry_price=float(position["entry_price"]),
+                quantity=float(position["quantity"]),
+                stop_price=float(position["stop_price"]),
+                target_price=float(position["target_price"]),
+                opened_at=str(position["opened_at"]),
+                entry_fee=float(position.get("entry_fee", 0.0)),
             )
-            account.positions[position.symbol] = position
+            account.positions[restored.symbol] = restored
         return account
 
     def _state_dict(self) -> dict:
         return {
-            "accounts": {symbol: self._account_to_dict(account) for symbol, account in self.accounts.items()},
+            "accounts": {
+                symbol: self._account_to_dict(account)
+                for symbol, account in self.accounts.items()
+            },
             "coins": list(self.coins),
             "equity_history": list(self.equity_history[-10000:]),
             "peak_equity": self.peak_equity,
@@ -155,12 +155,15 @@ class PaperPortfolio:
         if not state:
             return False
         try:
+            restored_accounts = state.get("accounts", {})
             self.accounts = {
                 str(symbol).upper(): self._account_from_dict(data)
-                for symbol, data in state.get("accounts", {}).items()
+                for symbol, data in restored_accounts.items()
                 if isinstance(data, dict)
             }
-            self.equity_history = [float(value) for value in state.get("equity_history", [self.capital])] or [self.capital]
+            self.equity_history = [
+                float(value) for value in state.get("equity_history", [self.capital])
+            ] or [self.capital]
             self.peak_equity = float(state.get("peak_equity", self.capital))
             self.max_drawdown_pct = float(state.get("max_drawdown_pct", 0.0))
             return True
@@ -177,9 +180,11 @@ class PaperPortfolio:
         try:
             save(self.state_path, self._config, self._state_dict())
         except OSError:
+            # Paper trading must remain usable if local persistence is unavailable.
             pass
 
     def save_state(self) -> None:
+        """Explicitly persist the current paper portfolio."""
         self._save_state()
 
     def _record_equity(self, value: float) -> None:
@@ -188,12 +193,19 @@ class PaperPortfolio:
         self.equity_history = self.equity_history[-10000:]
         self.peak_equity = max(self.peak_equity, value)
         if self.peak_equity > 0:
-            self.max_drawdown_pct = max(self.max_drawdown_pct, (self.peak_equity - value) / self.peak_equity * 100.0)
+            drawdown = (self.peak_equity - value) / self.peak_equity * 100.0
+            self.max_drawdown_pct = max(self.max_drawdown_pct, drawdown)
 
     def equity(self, marks: Optional[dict] = None) -> float:
         marks = marks or {}
-        value = sum(account.equity(marks.get(symbol), symbol) for symbol, account in self.accounts.items())
-        value = float(value if self.accounts else self.capital)
+        value = float(
+            sum(
+                account.equity(marks.get(symbol))
+                for symbol, account in self.accounts.items()
+            )
+        )
+        if not self.accounts:
+            value = self.capital
         self._record_equity(value)
         return value
 
@@ -212,32 +224,58 @@ class PaperPortfolio:
         closes = [event for event in events if event.get("event") == "CLOSE"]
         wins = [event for event in closes if float(event.get("pnl", 0)) > 0]
         losses = [event for event in closes if float(event.get("pnl", 0)) < 0]
+        long_trades = [event for event in closes if str(event.get("direction", "")).upper() == "LONG"]
+        short_trades = [event for event in closes if str(event.get("direction", "")).upper() == "SHORT"]
         gross_profit = sum(float(event.get("pnl", 0)) for event in wins)
         gross_loss = abs(sum(float(event.get("pnl", 0)) for event in losses))
-        avg_trade = sum(float(event.get("pnl", 0)) for event in closes) / len(closes) if closes else 0.0
-        profit_factor = gross_profit / gross_loss if gross_loss else (float("inf") if gross_profit else 0.0)
-        return {
+        total_fees = sum(
+            float(event.get("entry_fee", 0)) + float(event.get("exit_fee", 0))
+            for event in closes
+        )
+        return_pct = round((current_equity / self.capital - 1.0) * 100.0, 10)
+        current_drawdown_pct = round(
+            (self.peak_equity - current_equity) / self.peak_equity * 100.0,
+            10,
+        ) if self.peak_equity > 0 else 0.0
+        avg_trade = (
+            sum(float(event.get("pnl", 0)) for event in closes) / len(closes)
+            if closes else 0.0
+        )
+        best_trade = max((float(event.get("pnl", 0)) for event in closes), default=0.0)
+        worst_trade = min((float(event.get("pnl", 0)) for event in closes), default=0.0)
+        win_rate_pct = len(wins) / len(closes) * 100 if closes else 0.0
+        profit_factor = (
+            gross_profit / gross_loss
+            if gross_loss
+            else (float("inf") if gross_profit else 0.0)
+        )
+        payoff_ratio = gross_profit / len(wins) / (gross_loss / len(losses)) if wins and losses else 0.0
+        result = {
             "equity": current_equity,
-            "return_pct": round((current_equity / self.capital - 1.0) * 100.0, 10),
+            "return_pct": return_pct,
             "peak_equity": self.peak_equity,
-            "current_drawdown_pct": round((self.peak_equity - current_equity) / self.peak_equity * 100.0, 10) if self.peak_equity else 0.0,
+            "current_drawdown_pct": current_drawdown_pct,
             "max_drawdown_pct": round(self.max_drawdown_pct, 10),
             "symbols": len(self.accounts),
-            "open_positions": sum(len(account.positions) for account in self.accounts.values()),
+            "open_positions": sum(account.position is not None for account in self.accounts.values()),
             "closed_trades": len(closes),
             "wins": len(wins),
             "losses": len(losses),
-            "win_rate_pct": round(len(wins) / len(closes) * 100, 10) if closes else 0.0,
+            "win_rate_pct": round(win_rate_pct, 10),
             "profit_factor": round(profit_factor, 10) if profit_factor != float("inf") else profit_factor,
             "avg_trade": avg_trade,
             "expectancy": avg_trade,
-            "best_trade": max((float(event.get("pnl", 0)) for event in closes), default=0.0),
-            "worst_trade": min((float(event.get("pnl", 0)) for event in closes), default=0.0),
+            "best_trade": best_trade,
+            "worst_trade": worst_trade,
             "gross_profit": gross_profit,
             "gross_loss": gross_loss,
-            "long_trades": sum(1 for event in closes if str(event.get("direction", "")).upper() == "LONG"),
-            "short_trades": sum(1 for event in closes if str(event.get("direction", "")).upper() == "SHORT"),
+            "total_fees": total_fees,
+            "payoff_ratio": round(payoff_ratio, 10),
+            "long_trades": len(long_trades),
+            "short_trades": len(short_trades),
         }
+        self._save_state()
+        return result
 
     @staticmethod
     def _candidate_approved(candidate: dict) -> bool:
@@ -255,44 +293,51 @@ class PaperPortfolio:
             position = account.position
             if position.direction == "LONG":
                 if price <= position.stop_price:
-                    pnl = account.close_position(price, "SL", timestamp, symbol=symbol)
+                    pnl = account.close_position(price, "SL", timestamp)
                     self._save_state()
                     return {"action": "CLOSE", "reason": "SL", "pnl": pnl}
                 if price >= position.target_price:
-                    pnl = account.close_position(price, "TP", timestamp, symbol=symbol)
+                    pnl = account.close_position(price, "TP", timestamp)
                     self._save_state()
                     return {"action": "CLOSE", "reason": "TP", "pnl": pnl}
                 if float(scores.get("long_score", 0)) <= 0:
-                    pnl = account.close_position(price, "SIGNAL", timestamp, symbol=symbol)
+                    pnl = account.close_position(price, "SIGNAL", timestamp)
                     self._save_state()
                     return {"action": "CLOSE", "reason": "SIGNAL", "pnl": pnl}
             else:
                 if price >= position.stop_price:
-                    pnl = account.close_position(price, "SL", timestamp, symbol=symbol)
+                    pnl = account.close_position(price, "SL", timestamp)
                     self._save_state()
                     return {"action": "CLOSE", "reason": "SL", "pnl": pnl}
                 if price <= position.target_price:
-                    pnl = account.close_position(price, "TP", timestamp, symbol=symbol)
+                    pnl = account.close_position(price, "TP", timestamp)
                     self._save_state()
                     return {"action": "CLOSE", "reason": "TP", "pnl": pnl}
                 if float(scores.get("short_score", 0)) <= 0:
-                    pnl = account.close_position(price, "SIGNAL", timestamp, symbol=symbol)
+                    pnl = account.close_position(price, "SIGNAL", timestamp)
                     self._save_state()
                     return {"action": "CLOSE", "reason": "SIGNAL", "pnl": pnl}
             return {"action": "HOLD", "position": position.direction}
 
         if not self._candidate_approved(candidate):
             return {"action": "SKIP", "reason": "candidate_not_robust"}
+
         long_score = float(scores.get("long_score", 0))
         short_score = float(scores.get("short_score", 0))
-        direction = "LONG" if long_score > short_score and long_score > 0 else "SHORT" if short_score > long_score and short_score > 0 else None
+        direction = (
+            "LONG" if long_score > short_score and long_score > 0
+            else "SHORT" if short_score > long_score and short_score > 0
+            else None
+        )
         if direction is None:
             return {"action": "SKIP", "reason": "no_direction"}
+
         params = candidate.get("Strategy Params") or {}
         stop_distance = float(scores.get("stop_distance", params.get("sl_atr", 0)))
         rr = float(scores.get("rr", params.get("rr", 0)))
         if stop_distance <= 0 or rr <= 0:
             return {"action": "SKIP", "reason": "invalid_risk_parameters"}
+
         position = account.open_position(symbol, direction, price, stop_distance, rr, timestamp)
         self._save_state()
         return {"action": "OPEN", "direction": direction, "position": position}
@@ -300,14 +345,12 @@ class PaperPortfolio:
     def rows(self) -> list[dict]:
         rows = []
         for symbol, account in self.accounts.items():
-            positions = account.positions
-            position_text = "FLAT" if not positions else ", ".join(f"{p.direction} @ {p.entry_price:.8f}" for p in positions.values())
+            position = account.position
             rows.append({
                 "Symbol": symbol,
-                "Position": position_text,
+                "Position": "FLAT" if position is None else f"{position.direction} @ {position.entry_price:.8f}",
                 "Cash": round(account.cash, 8),
                 "Equity": round(account.equity(), 8),
-                "Open Positions": len(positions),
                 "Closed Trades": sum(1 for event in account.audit_log if event.get("event") == "CLOSE"),
             })
         return rows
