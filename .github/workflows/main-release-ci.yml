@@ -84,6 +84,7 @@ jobs:
           tests/test_phase34_paper_entry_guard.py
           tests/test_phase34_signal_gate.py
           tests/test_phase34_end_to_end.py
+          tests/test_phase34_paper_run.py
 
       - name: Full test suite
         run: python -m pytest -q
