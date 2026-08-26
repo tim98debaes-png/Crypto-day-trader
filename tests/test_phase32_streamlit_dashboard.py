@@ -45,7 +45,7 @@ def test_phase32_renderer_is_read_only_and_surfaces_degraded_alerts():
     fake = FakeStreamlit()
     render_dashboard(fake, snapshot)
     assert ("metric", "New entries", "BLOCKED") in fake.calls
-    warnings = [value for kind, value in fake.calls if kind == "warning"]
+    warnings = [call[1] for call in fake.calls if call[0] == "warning"]
     assert "stale_heartbeat" in warnings
     assert "drawdown_limit" in warnings
     assert "no_active_candidate" in warnings
