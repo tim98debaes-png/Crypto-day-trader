@@ -61,7 +61,7 @@ jobs:
               raise SystemExit("all public market feeds failed")
           PY
 
-      - name: Run bounded live-market-data paper session
+      - name: Run bounded 50-asset live-market-data paper session
         env:
           DURATION_MINUTES: ${{ github.event.inputs.duration_minutes || '60' }}
         run: |
@@ -71,7 +71,7 @@ jobs:
           from candidate_registry import CandidateRegistry
           from paper_engine import PaperAccount
           from paper_execution import PaperExecutionLoop
-          from phase34_paper_session import run_bounded_paper_session
+          from multi_asset_live_paper_session import run_multi_asset_paper_session
           from coinbase_public_feed import CoinbasePublicFeed
           from market_feed import BinancePublicFeed
           from market_feed_failover import PublicFeedFailover
@@ -82,9 +82,11 @@ jobs:
 
           with tempfile.TemporaryDirectory() as tmp:
               registry = CandidateRegistry(Path(tmp) / "registry.json")
+              # Portfolio-level approved candidate: no fixed symbol, so the
+              # scanner may evaluate the full curated universe.
               candidate = {"Status": "ROBUST", "Stability": 75, "OOS PF": 1.5,
                            "OOS %": 12, "OOS trades": 20, "OOS DD": -8, "MC P05 %": -2,
-                           "Direction": "LONG", "RR": 2.0, "symbol": "BTCUSDT"}
+                           "Direction": "LONG", "RR": 2.0}
               candidate_id = registry.register(candidate)
               decision = registry.promote(candidate_id, human_approved=True)
               if not decision.approved:
@@ -96,15 +98,21 @@ jobs:
                   ("binance", BinancePublicFeed(timeout=10)),
                   ("coinbase", CoinbasePublicFeed(timeout=10)),
               ])
-              result = run_bounded_paper_session(
-                  symbol="BTCUSDT", duration_seconds=duration_minutes * 60,
-                  interval_seconds=15, capital=1000.0, loop=loop, feed=feed,
+              result = run_multi_asset_paper_session(
+                  feed=feed, loop=loop, duration_seconds=duration_minutes * 60,
+                  interval_seconds=30,
               )
-              payload = {"symbol": result.symbol, "duration_minutes": duration_minutes,
-                         "samples": result.samples, "last_price": result.last_price,
-                         "errors": result.errors, "provider": feed.last_provider,
-                         "feed_failures": [f.__dict__ for f in feed.failures],
-                         "summary": result.summary}
+              payload = {
+                  "duration_minutes": result.duration_minutes,
+                  "universe_size": result.universe_size,
+                  "scan_cycles": result.scan_cycles,
+                  "successful_snapshots": result.successful_snapshots,
+                  "feed_errors": result.feed_errors,
+                  "candidate_symbols": list(result.candidate_symbols),
+                  "provider": feed.last_provider,
+                  "feed_failures": [f.__dict__ for f in feed.failures],
+                  "summary": result.summary,
+              }
               Path("paper_session_result.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
               print(json.dumps(payload, indent=2))
           PY
