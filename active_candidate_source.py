@@ -35,11 +35,11 @@ def get_active_candidate(
     registry: CandidateRegistry,
     symbol: str | None = None,
 ) -> CandidateGate:
-    """Return the registry's active candidate only when paper gates still pass.
+    """Return the active candidate only when the production safety gate passes.
 
-    ``symbol`` is optional because the registry can contain a portfolio-level
-    candidate. When a candidate explicitly contains ``Coin`` or ``symbol``, it
-    must match the requested paper symbol.
+    Research/paper experiments may use the softer gate in ``paper_router``
+    explicitly. The registry's active candidate is a release-grade selection,
+    so this read-only source deliberately validates it with production gates.
     """
     entry = registry.active()
     if entry is None:
@@ -59,7 +59,7 @@ def get_active_candidate(
         if candidate_symbol and str(candidate_symbol).upper() != requested:
             return CandidateGate(False, "candidate_symbol_mismatch")
 
-    if not candidate_is_approved(candidate):
+    if not candidate_is_approved(candidate, mode="production"):
         return CandidateGate(False, "quality_gates_failed")
 
     return CandidateGate(
