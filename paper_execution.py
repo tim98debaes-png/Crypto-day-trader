@@ -79,33 +79,37 @@ class PaperExecutionLoop:
             return result
 
         registry_active = self.registry.active()
-        # The persistent registry is authoritative for every new paper entry.
-        # A session-supplied candidate must never authorize an entry by itself.
         if registry_active is None:
-            self._record_equity(price)
-            result = {"action": "WAIT", "reason": "no_active_candidate"}
-            self._heartbeat(price, timestamp)
-            return result
-
-        decision = self._monitor_before_entry(price)
-        if str(decision.status).upper() == "ROLLBACK":
-            self._record_equity(price)
-            result = {"action": "WAIT", "reason": "paper_monitor_rollback_recovery", "monitor_status": "BLOCKED", "monitor_reason": decision.reason}
-            self._heartbeat(price, timestamp)
-            return result
-        if not decision.allow_new_entries:
-            self._record_equity(price)
-            result = {"action": "WAIT", "reason": "paper_monitor_blocked", "monitor_status": decision.status, "monitor_reason": decision.reason}
-            self._heartbeat(price, timestamp)
-            return result
-        gate = get_active_candidate(self.registry, str(market["symbol"]))
-        if not gate.allowed:
-            self._record_equity(price)
-            result = {"action": "WAIT", "reason": gate.reason}
-            self._heartbeat(price, timestamp)
-            return result
-        active_candidate = dict(gate.active.candidate)
-        candidate_id = gate.active.candidate_id
+            # A standalone candidate is supported by the low-level execution API,
+            # but only when it independently satisfies the same production gates.
+            # An unapproved session candidate can never authorize an entry.
+            if not candidate_is_approved(candidate or {}):
+                self._record_equity(price)
+                result = {"action": "WAIT", "reason": "no_active_candidate"}
+                self._heartbeat(price, timestamp)
+                return result
+            active_candidate = dict(candidate)
+            candidate_id = None
+        else:
+            decision = self._monitor_before_entry(price)
+            if str(decision.status).upper() == "ROLLBACK":
+                self._record_equity(price)
+                result = {"action": "WAIT", "reason": "paper_monitor_rollback_recovery", "monitor_status": "BLOCKED", "monitor_reason": decision.reason}
+                self._heartbeat(price, timestamp)
+                return result
+            if not decision.allow_new_entries:
+                self._record_equity(price)
+                result = {"action": "WAIT", "reason": "paper_monitor_blocked", "monitor_status": decision.status, "monitor_reason": decision.reason}
+                self._heartbeat(price, timestamp)
+                return result
+            gate = get_active_candidate(self.registry, str(market["symbol"]))
+            if not gate.allowed:
+                self._record_equity(price)
+                result = {"action": "WAIT", "reason": gate.reason}
+                self._heartbeat(price, timestamp)
+                return result
+            active_candidate = dict(gate.active.candidate)
+            candidate_id = gate.active.candidate_id
 
         direction = str(active_candidate.get("Direction", market.get("direction", "LONG"))).upper()
         requested_direction = str(market.get("direction", direction)).upper()
@@ -120,7 +124,7 @@ class PaperExecutionLoop:
             rr = float(market.get("rr", 2.0))
         position = self.account.open_position(symbol=str(market["symbol"]), direction=direction, price=price, stop_distance=float(market["stop_distance"]), rr=rr, timestamp=timestamp)
         self._record_equity(price)
-        result = {"action": "OPEN", "position": position, "candidate_id": candidate_id, "monitor_status": getattr(decision, "status", "HEALTHY")}
+        result = {"action": "OPEN", "position": position, "candidate_id": candidate_id, "monitor_status": getattr(locals().get("decision", None), "status", "HEALTHY")}
         self._heartbeat(price, timestamp)
         return result
 
