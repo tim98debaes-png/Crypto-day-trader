@@ -2,9 +2,9 @@
 
 Simulation only: this module never places exchange orders.
 It turns validated strategy signals into deterministic paper positions,
-with fees, slippage, risk sizing, daily loss protection, runtime safety and
-an audit log. The research portfolio has no artificial position-count cap;
-each symbol is limited to one open position.
+with fees, slippage, research risk sizing, daily loss protection, runtime
+safety and an audit log. The research portfolio has no artificial
+position-count cap; each symbol is limited to one open position.
 """
 
 from dataclasses import dataclass, field
@@ -12,6 +12,13 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from phase34_runtime_guard import evaluate_entry_guard
+
+
+# Phase 3 research risk: deliberately unchanged at 0.5% of available cash per
+# position. We broaden candidate acceptance, but do not compensate by taking
+# larger risk per trade. Daily loss protection remains 3%.
+RESEARCH_RISK_PCT = 0.5
+RESEARCH_MAX_DAILY_LOSS_PCT = 3.0
 
 
 @dataclass
@@ -30,10 +37,10 @@ class PaperPosition:
 class PaperAccount:
     capital: float = 1000.0
     cash: float = 1000.0
-    risk_pct: float = 0.5
+    risk_pct: float = RESEARCH_RISK_PCT
     fee_pct: float = 0.1
     slippage_pct: float = 0.02
-    max_daily_loss_pct: float = 3.0
+    max_daily_loss_pct: float = RESEARCH_MAX_DAILY_LOSS_PCT
     positions: dict[str, PaperPosition] = field(default_factory=dict)
     last_prices: dict[str, float] = field(default_factory=dict)
     day_start_equity: Optional[float] = None
@@ -45,6 +52,10 @@ class PaperAccount:
             raise ValueError("capital must be positive")
         if self.cash <= 0:
             self.cash = self.capital
+        if self.risk_pct <= 0:
+            raise ValueError("risk_pct must be positive")
+        if self.max_daily_loss_pct <= 0:
+            raise ValueError("max_daily_loss_pct must be positive")
         if self.day_start_equity is None:
             self.day_start_equity = self.capital
         if self.current_day is None:
