@@ -14,7 +14,8 @@ env:
 jobs:
   paper-session:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Allow the full 60-minute paper session to complete, plus setup/cleanup headroom.
+    timeout-minutes: 75
     permissions:
       contents: read
 
