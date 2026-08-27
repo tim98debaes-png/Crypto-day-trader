@@ -53,6 +53,10 @@ class RiskConfig:
             raise ValueError("invalid volatility range")
 
 
+# Shared default configuration used by the paper-session integration.
+RISK_CONFIG = RiskConfig()
+
+
 # Conservative, static research taxonomy. Unknown assets are intentionally put
 # in OTHER rather than guessing a sector.
 _SECTORS: dict[str, str] = {
