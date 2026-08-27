@@ -1,4 +1,5 @@
 import pytest
+from collections import deque
 from strategy_risk_controls import RiskConfig, exceeds_correlation_limit, pearson_correlation, sector_for, sector_position_count
 
 
@@ -17,6 +18,14 @@ def test_perfectly_correlated_series_are_blocked():
         "ETHUSDT": [50, 50.5, 51, 51.5, 52, 52.5],
     }
     assert pearson_correlation([1, 2, 3], [2, 4, 6]) == pytest.approx(1.0)
+    assert exceeds_correlation_limit("ETHUSDT", ["BTCUSDT"], histories, threshold=0.75, window=6)
+
+
+def test_correlation_accepts_deque_price_history():
+    histories = {
+        "BTCUSDT": deque([100, 101, 102, 103, 104, 105]),
+        "ETHUSDT": deque([50, 50.5, 51, 51.5, 52, 52.5]),
+    }
     assert exceeds_correlation_limit("ETHUSDT", ["BTCUSDT"], histories, threshold=0.75, window=6)
 
 
