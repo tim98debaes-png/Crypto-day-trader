@@ -35,8 +35,8 @@ class RiskConfig:
             raise ValueError("invalid standard risk")
         if self.max_open_positions < 1 or self.soft_open_positions < 1:
             raise ValueError("position caps must be positive")
-        if self.soft_open_positions > self.max_open_positions:
-            raise ValueError("soft cap cannot exceed hard cap")
+        # A deployment may deliberately choose a hard cap below the default
+        # soft threshold. The hard cap wins; this is a valid configuration.
         if self.max_positions_per_sector < 1:
             raise ValueError("sector cap must be positive")
         if not 0 < self.max_pairwise_correlation <= 1:
@@ -54,8 +54,7 @@ class RiskConfig:
 
 
 # Conservative, static research taxonomy. Unknown assets are intentionally put
-# in OTHER rather than guessing a sector. The cap therefore remains effective
-# for known groups while avoiding fabricated classifications.
+# in OTHER rather than guessing a sector.
 _SECTORS: dict[str, str] = {
     "BTCUSDT": "BTC", "ETHUSDT": "L1", "SOLUSDT": "L1", "ADAUSDT": "L1",
     "AVAXUSDT": "L1", "SUIUSDT": "L1", "TONUSDT": "L1", "DOTUSDT": "L1",
