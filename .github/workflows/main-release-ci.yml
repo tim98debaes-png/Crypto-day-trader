@@ -14,85 +14,53 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-
       - name: Install dependencies
         run: pip install -r requirements.txt pytest
-
       - name: Compile application
         run: >-
           python -m py_compile
           app.py validation_engine.py robustness_engine.py
           paper_engine.py backtest_engine.py strategy_optimizer.py
           paper_execution.py paper_portfolio.py paper_session_monitor.py market_feed.py
-          phase32_dashboard.py phase32_streamlit_dashboard.py
-          phase32_app_adapter.py phase34_runtime_guard.py phase34_signal_gate.py
-
+          multi_asset_scanner.py multi_asset_live_paper_session.py strategy_risk_controls.py
+          phase32_dashboard.py phase32_streamlit_dashboard.py phase32_app_adapter.py
+          phase34_runtime_guard.py phase34_signal_gate.py
       - name: Phase 3 validation tests
         run: python -m pytest -q tests/test_phase3_validation.py
-
       - name: Phase 4 robustness tests
         run: python -m pytest -q tests/test_phase4_robustness.py tests/test_phase4_integration_contract.py
-
       - name: Backtest and optimizer tests
         run: >-
-          python -m pytest -q
-          tests/test_phase14_backtest.py
-          tests/test_phase15_optimizer.py
-
+          python -m pytest -q tests/test_phase14_backtest.py tests/test_phase15_optimizer.py
       - name: Paper engine and portfolio tests
         run: >-
-          python -m pytest -q
-          tests/test_phase5_paper_engine.py
-          tests/test_phase5_router.py
-          tests/test_paper_portfolio.py
-
+          python -m pytest -q tests/test_phase5_paper_engine.py tests/test_phase5_router.py tests/test_paper_portfolio.py
       - name: Phase 21 monitor regression tests
         run: >-
-          python -m pytest -q
-          tests/test_phase21_monitoring.py
-          tests/test_phase21_execution_integration.py
-
+          python -m pytest -q tests/test_phase21_monitoring.py tests/test_phase21_execution_integration.py
+      - name: Strategy risk control tests
+        run: >-
+          python -m pytest -q tests/test_strategy_risk_controls.py tests/test_strategy_risk_engine.py
       - name: Phase 31 end-to-end validation
         run: >-
-          python -m pytest -q
-          tests/test_phase31_end_to_end.py
-          tests/test_phase31_portfolio_recovery.py
-          tests/test_phase31_market_feed_resilience.py
-
+          python -m pytest -q tests/test_phase31_end_to_end.py tests/test_phase31_portfolio_recovery.py tests/test_phase31_market_feed_resilience.py
       - name: Phase 32 dashboard validation
         run: >-
-          python -m pytest -q
-          tests/test_phase32_dashboard.py
-          tests/test_phase32_dashboard_integration.py
-          tests/test_phase32_dashboard_serialization.py
-          tests/test_phase32_streamlit_dashboard.py
-          tests/test_phase32_app_adapter.py
-
+          python -m pytest -q tests/test_phase32_dashboard.py tests/test_phase32_dashboard_integration.py
+          tests/test_phase32_dashboard_serialization.py tests/test_phase32_streamlit_dashboard.py tests/test_phase32_app_adapter.py
       - name: Phase 33 release hardening
         run: >-
-          python -m pytest -q
-          tests/test_phase33_release_hardening.py
-          tests/test_phase33_release_manifest.py
-
+          python -m pytest -q tests/test_phase33_release_hardening.py tests/test_phase33_release_manifest.py
       - name: Phase 34 runtime safety guard
         run: >-
-          python -m pytest -q
-          tests/test_phase34_runtime_guard.py
-          tests/test_phase34_paper_entry_guard.py
-          tests/test_phase34_signal_gate.py
-          tests/test_phase34_end_to_end.py
-          tests/test_phase34_paper_run.py
-
+          python -m pytest -q tests/test_phase34_runtime_guard.py tests/test_phase34_paper_entry_guard.py
+          tests/test_phase34_signal_gate.py tests/test_phase34_end_to_end.py tests/test_phase34_paper_run.py
       - name: Full test suite
         run: python -m pytest -q
-
-      # Keep the complete validation gate on every main push.
