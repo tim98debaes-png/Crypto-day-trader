@@ -38,7 +38,14 @@ def test_tob_is_only_applied_when_explicitly_marked():
 
 def test_securities_account_tax_2026_rate_and_threshold():
     assert securities_account_tax(1_000_000, "2026-08-31") == Decimal("0.00")
-    assert securities_account_tax(1_010_000, "2026-08-31") == Decimal("30.00")
+    # At €1.01m the 0.30% ordinary tax is capped at 10% of the €10k excess.
+    assert securities_account_tax(1_010_000, "2026-08-31") == Decimal("1000.00")
+    # At the statutory cap boundary the ordinary calculation takes over.
+    assert securities_account_tax(1_030_927.84, "2026-08-31") == Decimal("3092.78")
+
+
+def test_securities_account_tax_pre_june_2026_rate():
+    assert securities_account_tax(1_010_000, "2026-05-31") == Decimal("1000.00")
 
 
 def test_transfer_is_preserved_without_being_treated_as_a_trade():
