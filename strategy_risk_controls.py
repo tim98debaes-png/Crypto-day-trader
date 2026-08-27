@@ -1,0 +1,120 @@
+"""Research-stage portfolio risk controls used by the paper strategy.
+
+The controls are deliberately deterministic and fail closed. They do not claim
+that a correlation estimate is predictive; they simply reduce concentration
+when assets have recently moved together.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from math import sqrt
+from typing import Mapping, Sequence
+
+
+@dataclass(frozen=True)
+class RiskConfig:
+    # Keep the existing 0.5% research risk as the normal size; never increase
+    # risk merely because the portfolio has more signals.
+    standard_risk_pct: float = 0.50
+    max_risk_pct_per_trade: float = 1.00
+    max_total_open_risk_pct: float = 12.0
+    max_open_positions: int = 8
+    soft_open_positions: int = 6
+    max_positions_per_sector: int = 2
+    max_pairwise_correlation: float = 0.75
+    correlation_window: int = 6
+    trailing_atr_multiple: float = 2.2
+    partial_take_profit_r: float = 1.0
+    partial_take_profit_fraction: float = 0.50
+    time_stop_minutes: int = 360
+    volatility_floor_pct: float = 0.05
+    volatility_ceiling_pct: float = 0.80
+
+    def __post_init__(self) -> None:
+        if not 0 < self.standard_risk_pct <= self.max_risk_pct_per_trade:
+            raise ValueError("invalid standard risk")
+        if self.max_open_positions < 1 or self.soft_open_positions < 1:
+            raise ValueError("position caps must be positive")
+        if self.soft_open_positions > self.max_open_positions:
+            raise ValueError("soft cap cannot exceed hard cap")
+        if self.max_positions_per_sector < 1:
+            raise ValueError("sector cap must be positive")
+        if not 0 < self.max_pairwise_correlation <= 1:
+            raise ValueError("correlation threshold must be in (0,1]")
+        if self.correlation_window < 3:
+            raise ValueError("correlation window must be at least 3")
+        if self.trailing_atr_multiple <= 0:
+            raise ValueError("ATR multiple must be positive")
+        if not 0 < self.partial_take_profit_fraction <= 1:
+            raise ValueError("partial fraction must be in (0,1]")
+        if self.time_stop_minutes < 1:
+            raise ValueError("time stop must be positive")
+        if self.volatility_floor_pct < 0 or self.volatility_ceiling_pct <= self.volatility_floor_pct:
+            raise ValueError("invalid volatility range")
+
+
+# Conservative, static research taxonomy. Unknown assets are intentionally put
+# in OTHER rather than guessing a sector. The cap therefore remains effective
+# for known groups while avoiding fabricated classifications.
+_SECTORS: dict[str, str] = {
+    "BTCUSDT": "BTC", "ETHUSDT": "L1", "SOLUSDT": "L1", "ADAUSDT": "L1",
+    "AVAXUSDT": "L1", "SUIUSDT": "L1", "TONUSDT": "L1", "DOTUSDT": "L1",
+    "NEARUSDT": "L1", "APTUSDT": "L1", "ARBUSDT": "L2", "OPUSDT": "L2",
+    "ATOMUSDT": "L1", "SEIUSDT": "L1", "TIAUSDT": "L1", "JUPUSDT": "DEFI",
+    "UNIUSDT": "DEFI", "AAVEUSDT": "DEFI", "MKRUSDT": "DEFI", "RUNEUSDT": "DEFI",
+    "BNBUSDT": "EXCHANGE", "XRPUSDT": "PAYMENTS", "TRXUSDT": "PAYMENTS",
+    "XLMUSDT": "PAYMENTS", "LTCUSDT": "PAYMENTS", "BCHUSDT": "PAYMENTS",
+    "DOGEUSDT": "MEME", "SHIBUSDT": "MEME", "PEPEUSDT": "MEME", "WIFUSDT": "MEME",
+    "FLOKIUSDT": "MEME", "BONKUSDT": "MEME", "SANDUSDT": "GAMING", "MANAUSDT": "GAMING",
+    "AXSUSDT": "GAMING", "EGLDUSDT": "L1", "INJUSDT": "DEFI", "HBARUSDT": "L1",
+    "ALGOUSDT": "L1", "VETUSDT": "L1", "ICPUSDT": "L1", "QNTUSDT": "INFRA",
+    "GRTUSDT": "INFRA", "FILUSDT": "INFRA", "ETCUSDT": "POW", "RENDERUSDT": "AI",
+    "TAOUSDT": "AI", "ENAUSDT": "DEFI", "PYTHUSDT": "INFRA", "THETAUSDT": "AI",
+}
+
+
+def sector_for(symbol: str) -> str:
+    return _SECTORS.get(str(symbol).upper(), "OTHER")
+
+
+def pearson_correlation(a: Sequence[float], b: Sequence[float]) -> float | None:
+    n = min(len(a), len(b))
+    if n < 3:
+        return None
+    x = list(a[-n:]); y = list(b[-n:])
+    mx = sum(x) / n; my = sum(y) / n
+    dx = [v - mx for v in x]; dy = [v - my for v in y]
+    denom = sqrt(sum(v * v for v in dx) * sum(v * v for v in dy))
+    if denom <= 0:
+        return None
+    return sum(u * v for u, v in zip(dx, dy)) / denom
+
+
+def return_series(prices: Sequence[float]) -> list[float]:
+    result: list[float] = []
+    for previous, current in zip(prices, prices[1:]):
+        if previous > 0:
+            result.append(current / previous - 1.0)
+    return result
+
+
+def exceeds_correlation_limit(
+    symbol: str,
+    open_symbols: Sequence[str],
+    histories: Mapping[str, Sequence[float]],
+    *,
+    threshold: float = 0.75,
+    window: int = 6,
+) -> bool:
+    candidate_returns = return_series(histories.get(symbol, ()))[-window:]
+    for other in open_symbols:
+        other_returns = return_series(histories.get(other, ()))[-window:]
+        corr = pearson_correlation(candidate_returns, other_returns)
+        if corr is not None and corr >= threshold:
+            return True
+    return False
+
+
+def sector_position_count(symbol: str, open_symbols: Sequence[str]) -> int:
+    sector = sector_for(symbol)
+    return sum(1 for item in open_symbols if sector_for(item) == sector)
