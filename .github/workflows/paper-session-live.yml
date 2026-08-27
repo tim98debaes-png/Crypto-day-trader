@@ -6,10 +6,7 @@ on:
       duration_minutes:
         description: "Paper-session duration in minutes"
         required: false
-        default: "60"
-  push:
-    branches:
-      - main
+        default: "15"
 
 env:
   PYTHONPATH: ${{ github.workspace }}
@@ -17,7 +14,7 @@ env:
 jobs:
   paper-session:
     runs-on: ubuntu-latest
-    timeout-minutes: 75
+    timeout-minutes: 30
     permissions:
       contents: read
 
@@ -63,7 +60,7 @@ jobs:
 
       - name: Run bounded 50-asset live-market-data paper session
         env:
-          DURATION_MINUTES: ${{ github.event.inputs.duration_minutes || '60' }}
+          DURATION_MINUTES: ${{ github.event.inputs.duration_minutes || '15' }}
         run: |
           python - <<'PY'
           import json, os, tempfile
@@ -76,14 +73,12 @@ jobs:
           from market_feed import BinancePublicFeed
           from market_feed_failover import PublicFeedFailover
 
-          duration_minutes = int(os.environ.get("DURATION_MINUTES", "60"))
+          duration_minutes = int(os.environ.get("DURATION_MINUTES", "15"))
           if not 1 <= duration_minutes <= 60:
               raise SystemExit("duration_minutes must be between 1 and 60")
 
           with tempfile.TemporaryDirectory() as tmp:
               registry = CandidateRegistry(Path(tmp) / "registry.json")
-              # Portfolio-level approved candidate: no fixed symbol, so the
-              # scanner may evaluate the full curated universe.
               candidate = {"Status": "ROBUST", "Stability": 75, "OOS PF": 1.5,
                            "OOS %": 12, "OOS trades": 20, "OOS DD": -8, "MC P05 %": -2,
                            "Direction": "LONG", "RR": 2.0}
@@ -112,6 +107,7 @@ jobs:
                   "provider": feed.last_provider,
                   "feed_failures": [f.__dict__ for f in feed.failures],
                   "summary": result.summary,
+                  "diagnostics": result.diagnostics,
               }
               Path("paper_session_result.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
               print(json.dumps(payload, indent=2))
