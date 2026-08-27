@@ -94,8 +94,10 @@ def pearson_correlation(a: Sequence[float], b: Sequence[float]) -> float | None:
 
 
 def return_series(prices: Sequence[float]) -> list[float]:
+    """Convert any sequence-like price history, including deque, to returns."""
+    values = list(prices)
     result: list[float] = []
-    for previous, current in zip(prices, prices[1:]):
+    for previous, current in zip(values, values[1:]):
         if previous > 0:
             result.append(current / previous - 1.0)
     return result
