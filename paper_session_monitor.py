@@ -53,6 +53,17 @@ def _finite_number(snapshot: dict[str, Any], *keys: str) -> float | None:
         if math.isfinite(number): return number
     return None
 
+def _profit_factor(snapshot: dict[str, Any]) -> float | None:
+    for key in ("profit_factor", "pf"):
+        value = snapshot.get(key)
+        if value is None or value == "": continue
+        try: number = float(value)
+        except (TypeError, ValueError): continue
+        # +inf is a legitimate result when gross loss is exactly zero.
+        if math.isinf(number) and number > 0: return number
+        if math.isfinite(number): return number
+    return None
+
 def _loss_streak_from_events(events: list[dict[str, Any]]) -> int:
     streak = 0
     for event in reversed(events):
@@ -87,9 +98,12 @@ def snapshot_from_portfolio(portfolio: Any, marks: dict[str, Any] | None = None)
 
 def normalize_snapshot(snapshot: dict[str, Any]) -> dict[str, float] | None:
     if not isinstance(snapshot, dict): return None
-    values = [_finite_number(snapshot, "closed_trades", "trades"), _finite_number(snapshot, "profit_factor", "pf"), _finite_number(snapshot, "return_pct", "return"), _finite_number(snapshot, "max_drawdown_pct", "drawdown_pct", "drawdown"), _finite_number(snapshot, "consecutive_losses", "loss_streak")]
-    if any(value is None for value in values): return None
-    trades, pf, ret, dd, losses = values
+    trades = _finite_number(snapshot, "closed_trades", "trades")
+    pf = _profit_factor(snapshot)
+    ret = _finite_number(snapshot, "return_pct", "return")
+    dd = _finite_number(snapshot, "max_drawdown_pct", "drawdown_pct", "drawdown")
+    losses = _finite_number(snapshot, "consecutive_losses", "loss_streak")
+    if any(value is None for value in (trades, pf, ret, dd, losses)): return None
     if trades < 0 or pf < 0 or dd < 0 or losses < 0: return None
     return {"closed_trades": float(trades), "profit_factor": float(pf), "return_pct": float(ret), "max_drawdown_pct": float(dd), "consecutive_losses": float(int(losses))}
 
