@@ -57,6 +57,6 @@ def test_phase5_end_to_end_signal_entry_exit_portfolio_audit():
     assert summary["profit_factor"] > 0
 
     audit = portfolio.audit_log()
-    assert [event["event"] for event in audit] == ["OPEN", "CLOSE"]
+    assert [event["event"] for event in audit] == ["OPEN", "PARTIAL_CLOSE", "CLOSE"]
     assert audit[-1]["reason"] == "TP"
     assert float(audit[-1]["pnl"]) > 0
