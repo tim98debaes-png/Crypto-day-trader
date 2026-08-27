@@ -14,8 +14,8 @@ env:
 jobs:
   paper-session:
     runs-on: ubuntu-latest
-    # Allow the full 60-minute paper session to complete, plus setup/cleanup headroom.
-    timeout-minutes: 75
+    # Allow a full 300-minute paper session to complete, plus setup/cleanup headroom.
+    timeout-minutes: 330
     permissions:
       contents: read
 
@@ -75,8 +75,8 @@ jobs:
           from market_feed_failover import PublicFeedFailover
 
           duration_minutes = int(os.environ.get("DURATION_MINUTES", "15"))
-          if not 1 <= duration_minutes <= 60:
-              raise SystemExit("duration_minutes must be between 1 and 60")
+          if not 1 <= duration_minutes <= 300:
+              raise SystemExit("duration_minutes must be between 1 and 300")
 
           with tempfile.TemporaryDirectory() as tmp:
               registry = CandidateRegistry(Path(tmp) / "registry.json")
