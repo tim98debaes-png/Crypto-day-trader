@@ -111,8 +111,25 @@ jobs:
                   feed=feed, loop=loop, duration_seconds=duration_minutes * 60,
                   interval_seconds=30,
               )
+              git_sha = os.environ.get("GITHUB_SHA")
+              audit_events = list(account.audit_log)
+              closed_audits = [e for e in audit_events if e.get("event") == "CLOSE"]
+              execution_audit = {
+                  "trades_closed": len(closed_audits),
+                  "sl_trades": sum(e.get("reason") == "SL" for e in closed_audits),
+                  "tp_trades": sum(e.get("reason") == "TP" for e in closed_audits),
+                  "signal_trades": sum(e.get("reason") == "SIGNAL" for e in closed_audits),
+                  "time_stop_trades": sum(e.get("reason") == "TIME_STOP" for e in closed_audits),
+                  "avg_risk_to_actual_ratio": (sum(float(e.get("risk_to_actual_ratio", 0.0)) for e in closed_audits) / len(closed_audits)) if closed_audits else None,
+                  "max_risk_to_actual_ratio": max((float(e.get("risk_to_actual_ratio", 0.0)) for e in closed_audits), default=None),
+                  "avg_stop_gap_pct": (sum(float(e.get("stop_gap_pct", 0.0)) for e in closed_audits) / len(closed_audits)) if closed_audits else None,
+                  "max_stop_gap_pct": max((float(e.get("stop_gap_pct", 0.0)) for e in closed_audits), default=None),
+                  "intended_risk_total": sum(float(e.get("intended_risk_amount", 0.0)) for e in closed_audits),
+                  "actual_loss_total": sum(float(e.get("actual_loss_amount", 0.0)) for e in closed_audits),
+                  "trades": closed_audits,
+              }
               payload = {
-                  "duration_minutes": result.duration_minutes,
+                  "run_metadata": {"github_sha": git_sha, "github_run_id": os.environ.get("GITHUB_RUN_ID"), "github_run_number": os.environ.get("GITHUB_RUN_NUMBER"), "duration_minutes": duration_minutes},
                   "universe_size": result.universe_size,
                   "scan_cycles": result.scan_cycles,
                   "successful_snapshots": result.successful_snapshots,
@@ -124,8 +141,10 @@ jobs:
                   "feed_failures": [f.__dict__ for f in feed.failures],
                   "summary": result.summary,
                   "diagnostics": result.diagnostics,
+                  "execution_audit": execution_audit,
               }
               Path("paper_session_result.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
+              Path("execution_audit.json").write_text(json.dumps(execution_audit, indent=2), encoding="utf-8")
               print(json.dumps(payload, indent=2))
           PY
 
@@ -137,4 +156,5 @@ jobs:
           path: |
             feed_diagnostic.json
             paper_session_result.json
+            execution_audit.json
           if-no-files-found: warn
