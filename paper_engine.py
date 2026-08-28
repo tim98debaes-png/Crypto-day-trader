@@ -149,7 +149,10 @@ class PaperAccount:
         exit_fee=exit_price*position.quantity*self.fee_pct/100.0; pnl=gross-position.entry_fee-exit_fee
         self.cash+=gross-exit_fee; del self.positions[symbol]; self.loss_streak=self.loss_streak+1 if pnl<0 else 0
         if self.loss_streak>=8: self.cooldown_until=(self._parse_timestamp(timestamp)+timedelta(minutes=30)).isoformat()
-        self.audit_log.append({"event":"CLOSE","symbol":symbol,"direction":position.direction,"price":exit_price,"quantity":position.quantity,"gross_pnl":gross,"entry_fee":position.entry_fee,"exit_fee":exit_fee,"pnl":pnl,"reason":reason,"timestamp":timestamp})
+        stop_gap_pct=abs(float(price)-float(position.stop_price))/max(float(position.entry_price),1e-12)*100.0 if reason=="SL" else 0.0
+        actual_loss=abs(float(pnl)) if pnl<0 else 0.0
+        risk_to_actual_ratio=actual_loss/max(float(position.risk_amount),1e-12) if position.risk_amount>0 else 0.0
+        self.audit_log.append({"event":"CLOSE","symbol":symbol,"direction":position.direction,"price":exit_price,"quantity":position.quantity,"gross_pnl":gross,"entry_fee":position.entry_fee,"exit_fee":exit_fee,"pnl":pnl,"reason":reason,"timestamp":timestamp,"intended_risk_amount":position.risk_amount,"intended_stop_price":position.stop_price,"actual_loss_amount":actual_loss,"risk_to_actual_ratio":risk_to_actual_ratio,"stop_gap_pct":stop_gap_pct})
         return float(pnl)
     def position_age_minutes(self,symbol:str,timestamp:Optional[str])->float:
         position=self.positions.get(str(symbol))
