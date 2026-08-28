@@ -8,7 +8,7 @@ from typing import Any
 from candidate_registry import CandidateRegistry
 from paper_router import candidate_is_approved
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 HEALTHY = "HEALTHY"
 WATCH = "WATCH"
 ROLLBACK = "ROLLBACK"
@@ -17,6 +17,7 @@ BLOCKED = "BLOCKED"
 @dataclass(frozen=True)
 class MonitorThresholds:
     min_closed_trades: int = 20
+    rolling_window_trades: int = 20
     watch_profit_factor: float = 1.20
     rollback_profit_factor: float = 1.00
     watch_return_pct: float = 0.0
@@ -28,6 +29,7 @@ class MonitorThresholds:
 
     def __post_init__(self):
         if self.min_closed_trades < 1: raise ValueError("min_closed_trades must be positive")
+        if self.rolling_window_trades < 1: raise ValueError("rolling_window_trades must be positive")
         if self.rollback_profit_factor >= self.watch_profit_factor: raise ValueError("rollback_profit_factor must be below watch threshold")
         if self.rollback_return_pct >= self.watch_return_pct: raise ValueError("rollback_return_pct must be below watch threshold")
         if self.rollback_drawdown_pct <= self.watch_drawdown_pct: raise ValueError("rollback_drawdown_pct must exceed watch threshold")
@@ -59,7 +61,6 @@ def _profit_factor(snapshot: dict[str, Any]) -> float | None:
         if value is None or value == "": continue
         try: number = float(value)
         except (TypeError, ValueError): continue
-        # +inf is a legitimate result when gross loss is exactly zero.
         if math.isinf(number) and number > 0: return number
         if math.isfinite(number): return number
     return None
@@ -74,6 +75,17 @@ def _loss_streak_from_events(events: list[dict[str, Any]]) -> int:
         else: break
     return streak
 
+def _rolling_trade_metrics(closes: list[dict[str, Any]], window: int) -> tuple[int, float, int]:
+    recent = closes[-window:]
+    gross_profit = sum(max(float(event.get("pnl", 0.0)), 0.0) for event in recent)
+    gross_loss = abs(sum(min(float(event.get("pnl", 0.0)), 0.0) for event in recent))
+    pf = gross_profit / gross_loss if gross_loss else (float("inf") if gross_profit else 0.0)
+    streak = 0
+    for event in reversed(recent):
+        if float(event.get("pnl", 0.0)) < 0: streak += 1
+        else: break
+    return len(recent), float(pf), streak
+
 def snapshot_from_account(account: Any, mark_price: float | None = None) -> dict[str, float]:
     events = list(getattr(account, "audit_log", []) or [])
     closes = [event for event in events if str(event.get("event", "")).upper() == "CLOSE"]
@@ -82,6 +94,7 @@ def snapshot_from_account(account: Any, mark_price: float | None = None) -> dict
     gross_profit = sum(float(event.get("pnl", 0.0)) for event in wins)
     gross_loss = abs(sum(float(event.get("pnl", 0.0)) for event in losses))
     profit_factor = gross_profit / gross_loss if gross_loss else (float("inf") if gross_profit else 0.0)
+    rolling_trades, rolling_pf, rolling_streak = _rolling_trade_metrics(closes, 20)
     equity = float(account.equity(mark_price))
     capital = float(getattr(account, "capital", equity))
     return_pct = (equity / capital - 1.0) * 100.0 if capital > 0 else -100.0
@@ -90,11 +103,12 @@ def snapshot_from_account(account: Any, mark_price: float | None = None) -> dict
         running += float(event.get("pnl", 0.0)); peak = max(peak, running)
         if peak > 0: max_dd = max(max_dd, (peak - running) / peak * 100.0)
     if peak > 0: max_dd = max(max_dd, (peak - equity) / peak * 100.0)
-    return {"closed_trades": float(len(closes)), "profit_factor": float(profit_factor), "return_pct": float(return_pct), "max_drawdown_pct": float(max_dd), "consecutive_losses": float(_loss_streak_from_events(events))}
+    return {"closed_trades": float(len(closes)), "profit_factor": float(profit_factor), "return_pct": float(return_pct), "max_drawdown_pct": float(max_dd), "consecutive_losses": float(_loss_streak_from_events(events)), "rolling_trades": float(rolling_trades), "rolling_profit_factor": rolling_pf, "rolling_consecutive_losses": float(rolling_streak)}
 
 def snapshot_from_portfolio(portfolio: Any, marks: dict[str, Any] | None = None) -> dict[str, float]:
-    summary = dict(portfolio.summary(marks or {})); events = list(portfolio.audit_log())
-    return {"closed_trades": float(summary.get("closed_trades", 0)), "profit_factor": float(summary.get("profit_factor", 0.0)), "return_pct": float(summary.get("return_pct", 0.0)), "max_drawdown_pct": float(summary.get("max_drawdown_pct", 0.0)), "consecutive_losses": float(_loss_streak_from_events(events))}
+    summary = dict(portfolio.summary(marks or {})); events = list(portfolio.audit_log()); closes = [event for event in events if str(event.get("event", "")).upper() == "CLOSE"]
+    rolling_trades, rolling_pf, rolling_streak = _rolling_trade_metrics(closes, 20)
+    return {"closed_trades": float(summary.get("closed_trades", 0)), "profit_factor": float(summary.get("profit_factor", 0.0)), "return_pct": float(summary.get("return_pct", 0.0)), "max_drawdown_pct": float(summary.get("max_drawdown_pct", 0.0)), "consecutive_losses": float(_loss_streak_from_events(events)), "rolling_trades": float(rolling_trades), "rolling_profit_factor": rolling_pf, "rolling_consecutive_losses": float(rolling_streak)}
 
 def normalize_snapshot(snapshot: dict[str, Any]) -> dict[str, float] | None:
     if not isinstance(snapshot, dict): return None
@@ -105,7 +119,14 @@ def normalize_snapshot(snapshot: dict[str, Any]) -> dict[str, float] | None:
     losses = _finite_number(snapshot, "consecutive_losses", "loss_streak")
     if any(value is None for value in (trades, pf, ret, dd, losses)): return None
     if trades < 0 or pf < 0 or dd < 0 or losses < 0: return None
-    return {"closed_trades": float(trades), "profit_factor": float(pf), "return_pct": float(ret), "max_drawdown_pct": float(dd), "consecutive_losses": float(int(losses))}
+    rolling_trades = _finite_number(snapshot, "rolling_trades")
+    rolling_pf = _profit_factor({"profit_factor": snapshot.get("rolling_profit_factor")}) if snapshot.get("rolling_profit_factor") is not None else None
+    rolling_losses = _finite_number(snapshot, "rolling_consecutive_losses")
+    if rolling_trades is None: rolling_trades = trades
+    if rolling_pf is None: rolling_pf = pf
+    if rolling_losses is None: rolling_losses = losses
+    if rolling_trades < 0 or rolling_pf < 0 or rolling_losses < 0: return None
+    return {"closed_trades": float(trades), "profit_factor": float(pf), "return_pct": float(ret), "max_drawdown_pct": float(dd), "consecutive_losses": float(int(losses)), "rolling_trades": float(rolling_trades), "rolling_profit_factor": float(rolling_pf), "rolling_consecutive_losses": float(int(rolling_losses))}
 
 class PaperSessionMonitor:
     def __init__(self, registry: CandidateRegistry, thresholds: MonitorThresholds | None = None):
@@ -135,16 +156,18 @@ class PaperSessionMonitor:
         metrics = normalize_snapshot(snapshot)
         if metrics is None: return self._record(MonitorDecision(BLOCKED, "invalid_metrics", registry_active_id, None, False))
         if metrics["closed_trades"] < self.thresholds.min_closed_trades: return self._record(MonitorDecision(HEALTHY, "insufficient_sample", registry_active_id, None, True, metrics=metrics))
+        monitor_pf = metrics["rolling_profit_factor"] if metrics["rolling_trades"] >= self.thresholds.rolling_window_trades else metrics["profit_factor"]
+        monitor_losses = metrics["rolling_consecutive_losses"] if metrics["rolling_trades"] >= self.thresholds.rolling_window_trades else metrics["consecutive_losses"]
         watch, rollback = [], []
-        if metrics["profit_factor"] < self.thresholds.watch_profit_factor: watch.append("profit_factor")
-        if metrics["profit_factor"] < self.thresholds.rollback_profit_factor: rollback.append("profit_factor")
+        if monitor_pf < self.thresholds.watch_profit_factor: watch.append("profit_factor")
+        if monitor_pf < self.thresholds.rollback_profit_factor: rollback.append("profit_factor")
         if metrics["return_pct"] < self.thresholds.watch_return_pct: watch.append("return")
         if metrics["return_pct"] < self.thresholds.rollback_return_pct: rollback.append("return")
         if metrics["max_drawdown_pct"] >= self.thresholds.watch_drawdown_pct: watch.append("drawdown")
         if metrics["max_drawdown_pct"] >= self.thresholds.rollback_drawdown_pct: rollback.append("drawdown")
-        if metrics["consecutive_losses"] >= self.thresholds.watch_consecutive_losses: watch.append("loss_streak")
-        if metrics["consecutive_losses"] >= self.thresholds.rollback_consecutive_losses: rollback.append("loss_streak")
-        severe = metrics["max_drawdown_pct"] >= self.thresholds.rollback_drawdown_pct or metrics["consecutive_losses"] >= self.thresholds.rollback_consecutive_losses
+        if monitor_losses >= self.thresholds.watch_consecutive_losses: watch.append("loss_streak")
+        if monitor_losses >= self.thresholds.rollback_consecutive_losses: rollback.append("loss_streak")
+        severe = metrics["max_drawdown_pct"] >= self.thresholds.rollback_drawdown_pct or monitor_losses >= self.thresholds.rollback_consecutive_losses
         if not (severe or len(rollback) >= 2):
             return self._record(MonitorDecision(WATCH if watch else HEALTHY, "degradation_watch" if watch else "within_thresholds", registry_active_id, None, True, tuple(sorted(set(watch))), metrics))
         target_id = self._safe_fallback(registry_active_id)
