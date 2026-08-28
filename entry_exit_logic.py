@@ -13,7 +13,7 @@ def ema(values: list[float], period: int) -> float | None:
 
 
 def entry_signal(prices: list[float]) -> tuple[bool, str]:
-    """Use a balanced multi-factor score instead of a single hard momentum gate."""
+    """Use multi-factor confirmation while preserving anti-chasing protection."""
     if len(prices) < 12:
         return False, "insufficient_history"
     price = prices[-1]
@@ -28,24 +28,20 @@ def entry_signal(prices: list[float]) -> tuple[bool, str]:
     positive_moves = sum(1 for move in recent if move > 0)
     negative_moves = sum(1 for move in recent if move < 0)
 
-    # Hard safety conditions: do not enter against a materially falling trend
-    # or after an obvious price extension.
     if fast < slow * 0.9985 or price < slow * 0.9970:
         return False, "trend_not_confirmed"
-    if price > fast * 1.009:
+    if price > fast * 1.0085:
         return False, "overextended"
     if negative_moves == 3:
         return False, "short_term_reversal"
 
-    # Score independent evidence. A candidate needs 3/5 confirmations,
-    # avoiding both the old zero-entry problem and indiscriminate entries.
     score = 0
     score += 1 if fast >= slow else 0
     score += 1 if price >= fast * 0.999 else 0
     score += 1 if medium_return >= 0.0005 else 0
-    score += 1 if short_return >= -0.0002 else 0
+    score += 1 if short_return >= 0.0005 else 0
     score += 1 if positive_moves >= 2 else 0
-    if score < 3:
+    if score < 4:
         return False, "momentum_not_confirmed"
     return True, "confirmed"
 
