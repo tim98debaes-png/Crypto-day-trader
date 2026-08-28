@@ -26,13 +26,15 @@ def _entry_metrics(prices: list[float], direction: str):
     confirmation_window = prices[-3:]
     if direction == "LONG":
         touched = min(pullback_window) <= fast * 1.0015
-        reclaimed = price > fast * 1.0005
+        # Reclaim must be decisive enough to distinguish a genuine bounce
+        # from merely touching/crossing the fast EMA.
+        reclaimed = price > fast * 1.0015
         bounce = confirmation_window[-1] > confirmation_window[0] * 1.0004
         higher_low = confirmation_window[-1] > min(pullback_window) * 1.0005
         confirmed_bounce = touched and reclaimed and bounce and higher_low
     else:
         touched = max(pullback_window) >= fast * 0.9985
-        reclaimed = price < fast * 0.9995
+        reclaimed = price < fast * 0.9985
         bounce = confirmation_window[-1] < confirmation_window[0] * 0.9996
         lower_high = confirmation_window[-1] < max(pullback_window) * 0.9995
         confirmed_bounce = touched and reclaimed and bounce and lower_high
@@ -47,12 +49,15 @@ def entry_signal_details(prices: list[float], direction: str = "LONG"):
         return False, "invalid_direction", 0, {}
     price = prices[-1]
     fast, slow, short, medium, positive, negative, confirmed_bounce, touched = _entry_metrics(prices, direction)
+
+    # Keep the established five-factor score stable. Pullback/bounce is a
+    # separate hard gate and therefore must not inflate the score to 6/6.
     confirmations = {
         "trend": fast >= slow if direction == "LONG" else fast <= slow,
+        "price_near_fast": abs(price / fast - 1.0) <= 0.0065,
         "medium_momentum": medium >= 0.0005 if direction == "LONG" else medium <= -0.0005,
         "short_momentum": short >= 0.0005 if direction == "LONG" else short <= -0.0005,
-        "microstructure": positive >= 2 if direction == "LONG" else negative >= 2,
-        "pullback_bounce": confirmed_bounce,
+        "positive_microstructure": positive >= 2 if direction == "LONG" else negative >= 2,
     }
     score = sum(confirmations.values())
     if direction == "LONG":
