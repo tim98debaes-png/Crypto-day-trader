@@ -12,15 +12,15 @@ def ema(values: list[float], period: int) -> float | None:
     return result
 
 
-def entry_signal(prices: list[float]) -> tuple[bool, str]:
-    """Use multi-factor confirmation while preserving anti-chasing protection."""
+def entry_signal_details(prices: list[float]) -> tuple[bool, str, int, dict[str, bool]]:
+    """Return the entry decision plus the five-factor confirmation breakdown."""
     if len(prices) < 12:
-        return False, "insufficient_history"
+        return False, "insufficient_history", 0, {}
     price = prices[-1]
     fast = ema(prices[-8:], 5)
     slow = ema(prices[-12:], 10)
     if fast is None or slow is None:
-        return False, "insufficient_history"
+        return False, "insufficient_history", 0, {}
 
     short_return = prices[-1] / prices[-4] - 1.0
     medium_return = prices[-1] / prices[-10] - 1.0
@@ -28,22 +28,30 @@ def entry_signal(prices: list[float]) -> tuple[bool, str]:
     positive_moves = sum(1 for move in recent if move > 0)
     negative_moves = sum(1 for move in recent if move < 0)
 
-    if fast < slow * 0.9985 or price < slow * 0.9970:
-        return False, "trend_not_confirmed"
-    if price > fast * 1.0085:
-        return False, "overextended"
-    if negative_moves == 3:
-        return False, "short_term_reversal"
+    confirmations = {
+        "trend": fast >= slow,
+        "price_near_fast": price >= fast * 0.999,
+        "medium_momentum": medium_return >= 0.0005,
+        "short_momentum": short_return >= 0.0005,
+        "positive_microstructure": positive_moves >= 2,
+    }
+    score = sum(confirmations.values())
 
-    score = 0
-    score += 1 if fast >= slow else 0
-    score += 1 if price >= fast * 0.999 else 0
-    score += 1 if medium_return >= 0.0005 else 0
-    score += 1 if short_return >= 0.0005 else 0
-    score += 1 if positive_moves >= 2 else 0
+    if fast < slow * 0.9985 or price < slow * 0.9970:
+        return False, "trend_not_confirmed", score, confirmations
+    if price > fast * 1.0085:
+        return False, "overextended", score, confirmations
+    if negative_moves == 3:
+        return False, "short_term_reversal", score, confirmations
     if score < 4:
-        return False, "momentum_not_confirmed"
-    return True, "confirmed"
+        return False, "momentum_not_confirmed", score, confirmations
+    return True, "confirmed", score, confirmations
+
+
+def entry_signal(prices: list[float]) -> tuple[bool, str]:
+    """Use multi-factor confirmation while preserving anti-chasing protection."""
+    ready, reason, _score, _confirmations = entry_signal_details(prices)
+    return ready, reason
 
 
 def exit_signal(prices: list[float]) -> bool:
