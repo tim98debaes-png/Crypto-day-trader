@@ -6,7 +6,10 @@ from candidate_registry import CandidateRegistry
 
 
 def test_entry_details_exposes_five_factor_score():
-    prices = [100.0, 100.12, 100.24, 100.36, 100.31, 100.43, 100.55, 100.50, 100.62, 100.74, 100.70, 100.82]
+    # This fixture contains a genuine pullback into the EMA followed by a
+    # reclaim/bounce, so it exercises the current entry contract rather than
+    # relying on the old trend-only confirmation behavior.
+    prices = [100.0, 100.12, 100.24, 100.36, 100.31, 100.43, 100.55, 100.50, 100.62, 100.74, 100.70, 100.85]
     ready, reason, score, confirmations = entry_signal_details(prices)
     assert ready is True
     assert reason == "confirmed"
