@@ -22,12 +22,10 @@ def _entry_metrics(prices: list[float], direction: str):
     recent = [prices[i] / prices[i - 1] - 1.0 for i in range(len(prices) - 3, len(prices))]
     positive = sum(move > 0 for move in recent)
     negative = sum(move < 0 for move in recent)
-    pullback_window = prices[-7:-3]
+    pullback_window = prices[-8:-3]
     confirmation_window = prices[-3:]
     if direction == "LONG":
         touched = min(pullback_window) <= fast * 1.0015
-        # Reclaim must be decisive enough to distinguish a genuine bounce
-        # from merely touching/crossing the fast EMA.
         reclaimed = price > fast * 1.0015
         bounce = confirmation_window[-1] > confirmation_window[0] * 1.0004
         higher_low = confirmation_window[-1] > min(pullback_window) * 1.0005
@@ -49,9 +47,6 @@ def entry_signal_details(prices: list[float], direction: str = "LONG"):
         return False, "invalid_direction", 0, {}
     price = prices[-1]
     fast, slow, short, medium, positive, negative, confirmed_bounce, touched = _entry_metrics(prices, direction)
-
-    # Keep the established five-factor score stable. Pullback/bounce is a
-    # separate hard gate and therefore must not inflate the score to 6/6.
     confirmations = {
         "trend": fast >= slow if direction == "LONG" else fast <= slow,
         "price_near_fast": abs(price / fast - 1.0) <= 0.0065,
