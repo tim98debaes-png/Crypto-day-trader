@@ -1,8 +1,8 @@
-from entry_exit_logic import entry_signal_details
+from entry_exit_logic import entry_signal_details, exit_signal
 
 
-def test_entry_logic_supports_both_directions_without_invalid_direction():
-    prices = [100.0,100.2,100.1,100.3,100.0,99.9,100.1,100.4,100.6,100.7,100.8,101.0,101.2]
+def test_entry_logic_supports_both_directions():
+    prices = [100.0, 100.2, 100.1, 100.3, 100.0, 99.9, 100.1, 100.4, 100.6, 100.8, 101.0, 101.2, 101.5]
     long = entry_signal_details(prices, "LONG")
     short = entry_signal_details(prices, "SHORT")
     assert long[2] >= 0 and short[2] >= 0
@@ -15,3 +15,16 @@ def test_invalid_direction_is_rejected():
     assert reason == "invalid_direction"
     assert score == 0
     assert confirmations == {}
+
+
+def test_touch_without_reclaim_is_rejected():
+    prices = [100.0, 100.3, 100.5, 100.2, 99.7, 99.5, 99.6, 99.7, 99.6, 99.5, 99.6, 99.7]
+    ready, reason, _score, confirmations = entry_signal_details(prices, "LONG")
+    assert not ready
+    assert reason in {"bounce_not_confirmed", "momentum_not_confirmed", "trend_not_confirmed"}
+    assert not confirmations.get("pullback_bounce", False)
+
+
+def test_exit_logic_rejects_invalid_direction():
+    prices = [100.0 + i * 0.1 for i in range(12)]
+    assert exit_signal(prices, "SIDEWAYS") is False
