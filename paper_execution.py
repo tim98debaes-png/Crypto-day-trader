@@ -93,7 +93,7 @@ class PaperExecutionLoop:
         try: rr=float(active_candidate.get("RR",active_candidate.get("rr",market.get("rr",2.0))))
         except (TypeError,ValueError): rr=float(market.get("rr",2.0))
         try:
-            position=self.account.open_position(symbol=symbol,direction=direction,price=price,stop_distance=float(market["stop_distance"]),rr=rr,timestamp=timestamp)
+            position=self.account.open_position(symbol=symbol,direction=direction,price=price,stop_distance=float(market["stop_distance"]),rr=rr,timestamp=timestamp,risk_pct_override=market.get("risk_pct_override"),strategy_score=market.get("strategy_score"),strategy_tier=market.get("strategy_tier"))
         except RuntimeError as exc:
             self._record_equity(price,symbol); result={"action":"WAIT","reason":"risk_control_block","detail":str(exc)}; self._heartbeat(price,timestamp); return result
         self._record_equity(price,symbol); result={"action":"OPEN","position":position,"candidate_id":candidate_id,"monitor_status":getattr(locals().get("decision",None),"status","HEALTHY"),"open_position_count":len(self.account.positions)}; self._heartbeat(price,timestamp); return result
