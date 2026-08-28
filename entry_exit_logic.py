@@ -12,7 +12,7 @@ def ema(values: list[float], period: int) -> float | None:
     return result
 
 
-def _entry_metrics(prices: list[float], direction: str) -> tuple[float, float, float, int, int, bool, bool]:
+def _entry_metrics(prices: list[float], direction: str):
     price = prices[-1]
     fast = ema(prices[-8:], 5)
     slow = ema(prices[-12:], 10)
@@ -22,10 +22,6 @@ def _entry_metrics(prices: list[float], direction: str) -> tuple[float, float, f
     recent = [prices[i] / prices[i - 1] - 1.0 for i in range(len(prices) - 3, len(prices))]
     positive = sum(move > 0 for move in recent)
     negative = sum(move < 0 for move in recent)
-
-    # The pullback must happen before the confirmation leg. Merely having
-    # touched the EMA is insufficient; the current price must also reclaim
-    # the EMA and show directional follow-through.
     pullback_window = prices[-7:-3]
     confirmation_window = prices[-3:]
     if direction == "LONG":
@@ -40,7 +36,7 @@ def _entry_metrics(prices: list[float], direction: str) -> tuple[float, float, f
         bounce = confirmation_window[-1] < confirmation_window[0] * 0.9996
         lower_high = confirmation_window[-1] < max(pullback_window) * 0.9995
         confirmed_bounce = touched and reclaimed and bounce and lower_high
-    return fast, slow, short, positive, negative, confirmed_bounce, touched
+    return fast, slow, short, medium, positive, negative, confirmed_bounce, touched
 
 
 def entry_signal_details(prices: list[float], direction: str = "LONG"):
@@ -49,20 +45,16 @@ def entry_signal_details(prices: list[float], direction: str = "LONG"):
     direction = direction.upper()
     if direction not in {"LONG", "SHORT"}:
         return False, "invalid_direction", 0, {}
-
     price = prices[-1]
-    fast, slow, short, positive, negative, confirmed_bounce, touched = _entry_metrics(prices, direction)
-    medium = price / prices[-10] - 1.0
+    fast, slow, short, medium, positive, negative, confirmed_bounce, touched = _entry_metrics(prices, direction)
     confirmations = {
         "trend": fast >= slow if direction == "LONG" else fast <= slow,
-        "price_near_fast": price >= fast * 0.999 if direction == "LONG" else price <= fast * 1.001,
         "medium_momentum": medium >= 0.0005 if direction == "LONG" else medium <= -0.0005,
         "short_momentum": short >= 0.0005 if direction == "LONG" else short <= -0.0005,
         "microstructure": positive >= 2 if direction == "LONG" else negative >= 2,
         "pullback_bounce": confirmed_bounce,
     }
     score = sum(confirmations.values())
-
     if direction == "LONG":
         if fast < slow * 0.9985 or price < slow * 0.997:
             return False, "trend_not_confirmed", score, confirmations
@@ -77,7 +69,6 @@ def entry_signal_details(prices: list[float], direction: str = "LONG"):
             return False, "overextended", score, confirmations
         if positive == 3:
             return False, "short_term_reversal", score, confirmations
-
     if not touched:
         return False, "pullback_not_confirmed", score, confirmations
     if not confirmed_bounce:
