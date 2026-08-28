@@ -4,9 +4,10 @@ import time
 from collections import deque
 from dataclasses import dataclass
 from typing import Callable
+from entry_exit_logic import entry_signal, exit_signal
 from multi_asset_scanner import AssetSnapshot, DEFAULT_LIQUID_UNIVERSE, RESEARCH_MIN_QUOTE_VOLUME, rank_assets
 from paper_execution import PaperExecutionLoop
-from strategy_risk_controls import RISK_CONFIG, exceeds_correlation_limit, sector_for, sector_position_count
+from strategy_risk_controls import RISK_CONFIG, exceeds_correlation_limit, sector_position_count
 
 @dataclass(frozen=True)
 class MultiAssetPaperResult:
@@ -34,10 +35,11 @@ def run_multi_asset_paper_session(*, feed, loop: PaperExecutionLoop, duration_se
     symbols=tuple(dict.fromkeys(str(s).upper() for s in universe if s))
     if not symbols: raise ValueError("universe must not be empty")
     started=clock(); cycles=successful=errors=0; selected:list[str]=[]
-    history={s:deque(maxlen=max(20,RISK_CONFIG.correlation_window+2)) for s in symbols}; failure_streak={s:0 for s in symbols}; quarantined:set[str]=set()
+    history={s:deque(maxlen=max(20,RISK_CONFIG.correlation_window+12)) for s in symbols}; failure_streak={s:0 for s in symbols}; quarantined:set[str]=set()
     diagnostics={"assets_attempted":0,"liquidity_rejections":0,"ranked_candidates":0,"entry_momentum_rejections":0,"entry_volatility_rejections":0,
+                 "entry_trend_rejections":0,"entry_overextension_rejections":0,"entry_reversal_rejections":0,
                  "market_regime_rejections":0,"correlation_rejections":0,"sector_rejections":0,"position_cap_rejections":0,"entry_ready":0,
-                 "opened_trades":0,"closed_trades":0,"peak_open_positions":0,"research_gate_rejections":0,"quarantined_symbols":[]}
+                 "opened_trades":0,"closed_trades":0,"signal_exits":0,"peak_open_positions":0,"research_gate_rejections":0,"quarantined_symbols":[]}
 
     while clock()-started < duration_seconds:
         cycles += 1; snapshots:list[AssetSnapshot]=[]; diagnostics["assets_attempted"] += len(symbols)-len(quarantined)
@@ -46,8 +48,11 @@ def run_multi_asset_paper_session(*, feed, loop: PaperExecutionLoop, duration_se
             try:
                 snap=feed.snapshot(symbol); prices=history[symbol]; prices.append(float(snap.price))
                 atr_distance=max(float(snap.price)*max(float(getattr(snap,"volatility_pct",0.0)),0.05)/100.0*0.5, float(snap.price)*0.001)
-                loop.on_market({"symbol":snap.symbol,"price":snap.price,"direction":loop.account.positions[symbol].direction,
-                                "stop_distance":max(snap.price*0.0075,1e-8),"atr_distance":atr_distance,"timestamp":snap.timestamp})
+                signal_exit=exit_signal(list(prices))
+                result=loop.on_market({"symbol":snap.symbol,"price":snap.price,"direction":loop.account.positions[symbol].direction,
+                                "stop_distance":max(snap.price*0.006, atr_distance*1.8, 1e-8),"atr_distance":atr_distance,"timestamp":snap.timestamp},
+                                exit_signal=signal_exit)
+                if result.get("action")=="CLOSE" and result.get("reason")=="SIGNAL": diagnostics["signal_exits"] += 1
                 successful += 1
             except Exception: errors += 1
 
@@ -73,6 +78,13 @@ def run_multi_asset_paper_session(*, feed, loop: PaperExecutionLoop, duration_se
             if live.change_pct < 0.12: diagnostics["entry_momentum_rejections"]+=1; continue
             if not (RISK_CONFIG.volatility_floor_pct <= live.volatility_pct <= RISK_CONFIG.volatility_ceiling_pct): diagnostics["entry_volatility_rejections"]+=1; continue
             if candidate.symbol != "BTCUSDT" and not btc_trend_ok: diagnostics["market_regime_rejections"]+=1; continue
+            ready, reason = entry_signal(list(history[candidate.symbol]))
+            if not ready:
+                if reason == "trend_not_confirmed": diagnostics["entry_trend_rejections"] += 1
+                elif reason == "overextended": diagnostics["entry_overextension_rejections"] += 1
+                elif reason == "short_term_reversal": diagnostics["entry_reversal_rejections"] += 1
+                else: diagnostics["entry_momentum_rejections"] += 1
+                continue
             entry_ready.append(live)
         diagnostics["entry_ready"] += len(entry_ready)
 
@@ -87,7 +99,7 @@ def run_multi_asset_paper_session(*, feed, loop: PaperExecutionLoop, duration_se
             if live.symbol not in selected: selected.append(live.symbol)
             atr_distance=max(live.price*max(live.volatility_pct,0.05)/100.0*0.5,live.price*0.001)
             result=loop.on_market({"symbol":live.symbol,"price":live.price,"direction":"LONG",
-                                   "stop_distance":max(live.price*0.0075,1e-8),"atr_distance":atr_distance,"timestamp":None})
+                                   "stop_distance":max(live.price*0.006, atr_distance*1.8, 1e-8),"atr_distance":atr_distance,"timestamp":None})
             if result.get("action")=="OPEN": diagnostics["opened_trades"]+=1
             elif result.get("reason") in {"candidate_direction_mismatch","paper_monitor_blocked","paper_monitor_rollback_recovery","risk_control_block"}: diagnostics["research_gate_rejections"]+=1
 
