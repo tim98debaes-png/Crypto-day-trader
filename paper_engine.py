@@ -84,25 +84,32 @@ class PaperAccount:
         return 1.0
     def open_risk_pct(self)->float:
         return (sum(p.risk_amount for p in self.positions.values())/self.capital*100.0) if self.capital>0 else 100.0
-    def can_open(self,mark_price:float,symbol:str,timestamp:Optional[str]=None)->bool:
-        effective_risk=min(self.risk_pct,self.risk_config.max_risk_pct_per_trade)*self._risk_multiplier(timestamp)
+    def can_open(self,mark_price:float,symbol:str,timestamp:Optional[str]=None,*,risk_pct_override:float|None=None)->bool:
+        base_risk=self.risk_pct if risk_pct_override is None else float(risk_pct_override)
+        if base_risk <= 0: return False
+        effective_risk=min(base_risk,self.risk_config.max_risk_pct_per_trade)*self._risk_multiplier(timestamp)
         return (not self.has_position(symbol) and len(self.positions)<self.risk_config.max_open_positions
                 and self.open_risk_pct()+effective_risk<=self.risk_config.max_total_open_risk_pct
                 and self.daily_loss_pct(mark_price,symbol)>-self.max_daily_loss_pct and self.cash>0 and effective_risk>0)
-    def open_position(self,symbol:str,direction:str,price:float,stop_distance:float,rr:float,timestamp:Optional[str]=None,*,strategy_ready:bool=True,heartbeat_age_seconds:float|None=0.0,paper_mode:bool=True)->PaperPosition:
+    def open_position(self,symbol:str,direction:str,price:float,stop_distance:float,rr:float,timestamp:Optional[str]=None,*,strategy_ready:bool=True,heartbeat_age_seconds:float|None=0.0,paper_mode:bool=True,risk_pct_override:float|None=None,strategy_score:int|None=None,strategy_tier:str|None=None)->PaperPosition:
         timestamp=timestamp or datetime.now(timezone.utc).isoformat(); self._roll_day(timestamp); symbol=str(symbol); direction=direction.upper()
         if direction not in {"LONG","SHORT"}: raise ValueError("direction must be LONG or SHORT")
         if price<=0 or stop_distance<=0 or rr<=0: raise ValueError("price, stop_distance and rr must be positive")
+        if risk_pct_override is not None and float(risk_pct_override) <= 0: raise ValueError("risk_pct_override must be positive")
         if self.has_position(symbol): raise RuntimeError(f"paper account already has an open position for {symbol}")
         guard=evaluate_entry_guard(paper_mode=paper_mode,strategy_ready=strategy_ready,heartbeat_age_seconds=heartbeat_age_seconds,drawdown_pct=self.daily_loss_pct(price,symbol),max_drawdown_pct=20.0)
         if not guard.allowed: raise RuntimeError("paper account is not allowed to open a position: "+",".join(guard.reasons))
-        if not self.can_open(price,symbol,timestamp): raise RuntimeError("paper account is not allowed to open a position")
-        effective_risk_pct=min(self.risk_pct,self.risk_config.max_risk_pct_per_trade)*self._risk_multiplier(timestamp); risk_amount=self.cash*effective_risk_pct/100.0; quantity=risk_amount/stop_distance
+        if not self.can_open(price,symbol,timestamp,risk_pct_override=risk_pct_override): raise RuntimeError("paper account is not allowed to open a position")
+        base_risk=self.risk_pct if risk_pct_override is None else float(risk_pct_override)
+        effective_risk_pct=min(base_risk,self.risk_config.max_risk_pct_per_trade)*self._risk_multiplier(timestamp); risk_amount=self.cash*effective_risk_pct/100.0; quantity=risk_amount/stop_distance
         entry=price*(1.0+self.slippage_pct/100.0) if direction=="LONG" else price*(1.0-self.slippage_pct/100.0)
         stop=entry-stop_distance if direction=="LONG" else entry+stop_distance; target=entry+stop_distance*rr if direction=="LONG" else entry-stop_distance*rr
         entry_fee=entry*quantity*self.fee_pct/100.0; self.cash-=entry_fee; self.last_prices[symbol]=float(price)
         position=PaperPosition(symbol,direction,entry,quantity,stop,target,timestamp,entry_fee,quantity,stop_distance,risk_amount,False,price,price); self.positions[symbol]=position
-        self.audit_log.append({"event":"OPEN","symbol":symbol,"direction":direction,"price":entry,"quantity":quantity,"entry_fee":entry_fee,"risk_amount":risk_amount,"risk_pct":effective_risk_pct,"timestamp":timestamp})
+        event={"event":"OPEN","symbol":symbol,"direction":direction,"price":entry,"quantity":quantity,"entry_fee":entry_fee,"risk_amount":risk_amount,"risk_pct":effective_risk_pct,"timestamp":timestamp}
+        if strategy_score is not None: event["strategy_score"]=int(strategy_score)
+        if strategy_tier is not None: event["strategy_tier"]=str(strategy_tier)
+        self.audit_log.append(event)
         return position
     def update_trailing_stop(self,symbol:str,price:float,atr_distance:float)->float:
         position=self.positions.get(str(symbol))
