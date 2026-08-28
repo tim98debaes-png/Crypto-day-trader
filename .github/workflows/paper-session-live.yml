@@ -7,6 +7,14 @@ on:
         description: "Paper-session duration in minutes (1-720)"
         required: false
         default: "15"
+      fee_pct:
+        description: "Research execution fee percentage per side"
+        required: false
+        default: "0.10"
+      slippage_pct:
+        description: "Research execution slippage percentage per side"
+        required: false
+        default: "0.02"
 
 env:
   PYTHONPATH: ${{ github.workspace }}
@@ -14,7 +22,6 @@ env:
 jobs:
   paper-session:
     runs-on: ubuntu-latest
-    # Allow a full 12-hour paper session to complete, plus setup/cleanup headroom.
     timeout-minutes: 750
     permissions:
       contents: read
@@ -62,6 +69,8 @@ jobs:
       - name: Run bounded 50-asset live-market-data paper session
         env:
           DURATION_MINUTES: ${{ github.event.inputs.duration_minutes || '15' }}
+          FEE_PCT: ${{ github.event.inputs.fee_pct || '0.10' }}
+          SLIPPAGE_PCT: ${{ github.event.inputs.slippage_pct || '0.02' }}
         run: |
           python - <<'PY'
           import json, os, tempfile
@@ -75,8 +84,12 @@ jobs:
           from market_feed_failover import PublicFeedFailover
 
           duration_minutes = int(os.environ.get("DURATION_MINUTES", "15"))
+          fee_pct = float(os.environ.get("FEE_PCT", "0.10"))
+          slippage_pct = float(os.environ.get("SLIPPAGE_PCT", "0.02"))
           if not 1 <= duration_minutes <= 720:
               raise SystemExit("duration_minutes must be between 1 and 720")
+          if fee_pct < 0 or slippage_pct < 0:
+              raise SystemExit("fee_pct and slippage_pct must be non-negative")
 
           with tempfile.TemporaryDirectory() as tmp:
               registry = CandidateRegistry(Path(tmp) / "registry.json")
@@ -88,7 +101,7 @@ jobs:
               if not decision.approved:
                   raise SystemExit(f"candidate promotion failed: {decision.reason}")
 
-              account = PaperAccount(capital=1000.0, fee_pct=0.0, slippage_pct=0.0)
+              account = PaperAccount(capital=1000.0, fee_pct=fee_pct, slippage_pct=slippage_pct)
               loop = PaperExecutionLoop(account, registry=registry, persist_observability=False)
               feed = PublicFeedFailover([
                   ("binance", BinancePublicFeed(timeout=10)),
@@ -106,6 +119,8 @@ jobs:
                   "feed_errors": result.feed_errors,
                   "candidate_symbols": list(result.candidate_symbols),
                   "provider": feed.last_provider,
+                  "fee_pct_per_side": fee_pct,
+                  "slippage_pct_per_side": slippage_pct,
                   "feed_failures": [f.__dict__ for f in feed.failures],
                   "summary": result.summary,
                   "diagnostics": result.diagnostics,
