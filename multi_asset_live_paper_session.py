@@ -35,7 +35,7 @@ def _entry_score(prices: list[float]) -> tuple[int, dict[str, float]]:
     short=price/prices[-4]-1.0; medium=price/prices[-10]-1.0
     recent=[prices[i]/prices[i-1]-1.0 for i in range(len(prices)-3,len(prices))]
     positive=sum(1 for x in recent if x>0); negative=sum(1 for x in recent if x<0)
-    score=sum((fast>=slow, price>=fast*0.999, medium>=0.0005, short>=-0.0002, positive>=2))
+    score=sum((fast>=slow, price>=fast*0.999, medium>=0.0005, short>=0.0005, positive>=2))
     return score, {"short_return":short,"medium_return":medium,"positive_ticks":float(positive),"negative_ticks":float(negative),"fast":fast,"slow":slow}
 
 
@@ -75,10 +75,9 @@ def run_multi_asset_paper_session(*, feed, loop: PaperExecutionLoop, duration_se
         entry_ready=[]
         for candidate in ranked:
             live=next(s for s in snapshots if s.symbol==candidate.symbol); prices=list(history[candidate.symbol]); score,features=_entry_score(prices)
-            # Use the scanner's ranking as the first quality filter and a 3/5
-            # confirmation score as the strategy gate. Avoid a fixed percentage
-            # move threshold that previously starved the strategy of entries.
-            if score < 3:
+            # Match the shared entry logic: require four of five confirmations,
+            # including a meaningful current impulse, before deeper risk gates.
+            if score < 4:
                 diagnostics["entry_momentum_rejections"]+=1; continue
             if not (RISK_CONFIG.volatility_floor_pct<=live.volatility_pct<=RISK_CONFIG.volatility_ceiling_pct): diagnostics["entry_volatility_rejections"]+=1; continue
             if candidate.symbol!="BTCUSDT" and not btc_trend_ok: diagnostics["market_regime_rejections"]+=1; continue
