@@ -61,17 +61,11 @@ def _audit_diagnostics(audit_log: list[dict]) -> dict:
     coin_groups: dict[str, dict] = {}
     exit_groups: dict[str, dict] = {}
     for event in audit_log:
-        symbol=str(event.get("symbol", ""))
-        kind=str(event.get("event", "")).upper()
-        if kind == "OPEN":
-            opens[symbol]=event
-            continue
-        if kind != "CLOSE":
-            continue
-        opened=opens.pop(symbol, {})
-        pnl=float(event.get("pnl", 0.0))
-        score=event.get("strategy_score", opened.get("strategy_score"))
-        tier=event.get("strategy_tier", opened.get("strategy_tier"))
+        symbol=str(event.get("symbol", "")); kind=str(event.get("event", "")).upper()
+        if kind == "OPEN": opens[symbol]=event; continue
+        if kind != "CLOSE": continue
+        opened=opens.pop(symbol, {}); pnl=float(event.get("pnl", 0.0))
+        score=event.get("strategy_score", opened.get("strategy_score")); tier=event.get("strategy_tier", opened.get("strategy_tier"))
         score_key=f"{int(score)}/5" if score is not None and int(score) in (3,4,5) else None
         groups=[]
         if score_key in score_groups: groups.append(score_groups[score_key])
@@ -82,12 +76,7 @@ def _audit_diagnostics(audit_log: list[dict]) -> dict:
             stats["trades"]+=1; stats["net_pnl"]+=pnl
             if pnl>=0: stats["wins"]+=1; stats["gross_profit"]+=pnl
             else: stats["losses"]+=1; stats["gross_loss"]+=abs(pnl)
-    return {
-        "score_groups": {key: _finalize_trade_stats(value) for key,value in score_groups.items()},
-        "tier_groups": {key: _finalize_trade_stats(value) for key,value in tier_groups.items()},
-        "coin_groups": {key: _finalize_trade_stats(value) for key,value in sorted(coin_groups.items())},
-        "exit_groups": {key: _finalize_trade_stats(value) for key,value in sorted(exit_groups.items())},
-    }
+    return {"score_groups": {key: _finalize_trade_stats(value) for key,value in score_groups.items()}, "tier_groups": {key: _finalize_trade_stats(value) for key,value in tier_groups.items()}, "coin_groups": {key: _finalize_trade_stats(value) for key,value in sorted(coin_groups.items())}, "exit_groups": {key: _finalize_trade_stats(value) for key,value in sorted(exit_groups.items())}}
 
 
 def run_multi_asset_paper_session(*, feed, loop: PaperExecutionLoop, duration_seconds: int = 3600,
@@ -98,11 +87,7 @@ def run_multi_asset_paper_session(*, feed, loop: PaperExecutionLoop, duration_se
     if not symbols: raise ValueError("universe must not be empty")
     started=clock(); cycles=successful=errors=0; selected:list[str]=[]
     history={s:deque(maxlen=max(20,RISK_CONFIG.correlation_window+12)) for s in symbols}; failure_streak={s:0 for s in symbols}; quarantined:set[str]=set()
-    diagnostics={"assets_attempted":0,"liquidity_rejections":0,"ranked_candidates":0,"entry_momentum_rejections":0,"entry_volatility_rejections":0,
-                 "entry_trend_rejections":0,"entry_overextension_rejections":0,"entry_reversal_rejections":0,"market_regime_rejections":0,
-                 "correlation_rejections":0,"sector_rejections":0,"position_cap_rejections":0,"entry_ready":0,"opened_trades":0,"closed_trades":0,
-                 "signal_exits":0,"peak_open_positions":0,"research_gate_rejections":0,"quarantined_symbols":[],"tier_a_ready":0,"tier_b_ready":0,
-                 "tier_a_opened":0,"tier_b_opened":0,"score_counts":{"3/5":0,"4/5":0,"5/5":0}}
+    diagnostics={"assets_attempted":0,"liquidity_rejections":0,"ranked_candidates":0,"entry_momentum_rejections":0,"entry_volatility_rejections":0,"entry_trend_rejections":0,"entry_overextension_rejections":0,"entry_reversal_rejections":0,"market_regime_rejections":0,"correlation_rejections":0,"sector_rejections":0,"position_cap_rejections":0,"entry_ready":0,"opened_trades":0,"closed_trades":0,"signal_exits":0,"peak_open_positions":0,"research_gate_rejections":0,"quarantined_symbols":[],"tier_a_ready":0,"tier_b_ready":0,"tier_a_opened":0,"tier_b_opened":0,"score_counts":{"3/5":0,"4/5":0,"5/5":0}}
     while clock()-started < duration_seconds:
         cycles+=1; snapshots:list[AssetSnapshot]=[]; diagnostics["assets_attempted"]+=len(symbols)-len(quarantined)
         for symbol in tuple(loop.account.positions.keys()):
@@ -128,10 +113,16 @@ def run_multi_asset_paper_session(*, feed, loop: PaperExecutionLoop, duration_se
         for candidate in ranked:
             live=next(s for s in snapshots if s.symbol==candidate.symbol); prices=list(history[candidate.symbol])
             ready,reason,score,confirmations=entry_signal_details(prices)
-            # Tier A is the original strong setup. Tier B is the controlled
-            # 3/5 experiment: trend + medium momentum + positive microstructure
-            # must agree, while the position is sized at half normal research risk.
-            tier = "A" if score >= TIER_A_MIN_SCORE else "B" if score == TIER_B_MIN_SCORE and confirmations.get("trend") and confirmations.get("medium_momentum") and confirmations.get("positive_microstructure") else None
+            # Hard safety conditions from entry_signal_details always win.
+            # Tier A requires the full 4/5+ confirmed setup. Tier B is only the
+            # safe 3/5 experiment with trend, medium momentum and positive
+            # microstructure aligned, and receives half normal risk.
+            if ready and score >= TIER_A_MIN_SCORE:
+                tier="A"
+            elif reason=="momentum_not_confirmed" and score==TIER_B_MIN_SCORE and confirmations.get("trend") and confirmations.get("medium_momentum") and confirmations.get("positive_microstructure"):
+                tier="B"
+            else:
+                tier=None
             if tier is None:
                 if reason=="trend_not_confirmed": diagnostics["entry_trend_rejections"]+=1
                 elif reason=="overextended": diagnostics["entry_overextension_rejections"]+=1
@@ -154,8 +145,7 @@ def run_multi_asset_paper_session(*, feed, loop: PaperExecutionLoop, duration_se
             atr_distance=max(live.price*max(live.volatility_pct,0.05)/100.0*0.5,live.price*0.001)
             risk_pct=None if tier=="A" else TIER_B_RISK_PCT
             result=loop.on_market({"symbol":live.symbol,"price":live.price,"direction":"LONG","stop_distance":max(live.price*0.006,atr_distance*1.8,1e-8),"atr_distance":atr_distance,"timestamp":None,"strategy_score":score,"strategy_tier":tier,"risk_pct_override":risk_pct})
-            if result.get("action")=="OPEN":
-                diagnostics["opened_trades"]+=1; diagnostics[f"tier_{tier.lower()}_opened"]+=1
+            if result.get("action")=="OPEN": diagnostics["opened_trades"]+=1; diagnostics[f"tier_{tier.lower()}_opened"]+=1
             elif result.get("reason") in {"candidate_direction_mismatch","paper_monitor_blocked","paper_monitor_rollback_recovery","risk_control_block"}: diagnostics["research_gate_rejections"]+=1
         diagnostics["closed_trades"]=loop.stats.closed_trades; diagnostics["peak_open_positions"]=max(diagnostics["peak_open_positions"],len(loop.account.positions)); diagnostics["quarantined_symbols"]=sorted(quarantined)
         remaining=duration_seconds-(clock()-started)
