@@ -75,7 +75,9 @@ def run_multi_asset_paper_session(*, feed, loop: PaperExecutionLoop, duration_se
         entry_ready=[]
         for candidate in ranked:
             live=next(s for s in snapshots if s.symbol==candidate.symbol)
-            if live.change_pct < 0.12: diagnostics["entry_momentum_rejections"]+=1; continue
+            # Softer candidate gate: keep a small positive move requirement, while the
+            # richer entry_signal() remains responsible for trend/momentum confirmation.
+            if live.change_pct < 0.05: diagnostics["entry_momentum_rejections"]+=1; continue
             if not (RISK_CONFIG.volatility_floor_pct <= live.volatility_pct <= RISK_CONFIG.volatility_ceiling_pct): diagnostics["entry_volatility_rejections"]+=1; continue
             if candidate.symbol != "BTCUSDT" and not btc_trend_ok: diagnostics["market_regime_rejections"]+=1; continue
             ready, reason = entry_signal(list(history[candidate.symbol]))
