@@ -5,8 +5,6 @@ from typing import Optional
 from phase34_runtime_guard import evaluate_entry_guard
 from strategy_risk_controls import RiskConfig
 
-RESEARCH_RISK_PCT = 0.5
-RESEARCH_MAX_DAILY_LOSS_PCT = 3.0
 RISK_CONFIG = RiskConfig()
 
 @dataclass
@@ -31,10 +29,10 @@ class PaperPosition:
 class PaperAccount:
     capital: float = 1000.0
     cash: float = 1000.0
-    risk_pct: float = RESEARCH_RISK_PCT
+    risk_pct: float = RISK_CONFIG.standard_risk_pct
     fee_pct: float = 0.1
     slippage_pct: float = 0.02
-    max_daily_loss_pct: float = RESEARCH_MAX_DAILY_LOSS_PCT
+    max_daily_loss_pct: float = 3.0
     risk_config: RiskConfig = RISK_CONFIG
     positions: dict[str, PaperPosition] = field(default_factory=dict)
     last_prices: dict[str, float] = field(default_factory=dict)
