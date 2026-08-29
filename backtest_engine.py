@@ -69,7 +69,7 @@ class HistoricalBacktester:
         high = float(row.get("high", close))
         low = float(row.get("low", close))
         if high <= 0 or low <= 0 or low > high or not low <= close <= high:
-            raise ValueError("invalid candle high/low")
+            raise ValueError("invalid candle high/low: values must be positive and ordered")
         return high, low, close
 
     @staticmethod
