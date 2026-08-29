@@ -25,6 +25,7 @@ class PaperPosition:
     partial_taken: bool = False
     highest_price: float = 0.0
     lowest_price: float = 0.0
+    initial_stop_price: float = 0.0
 
 @dataclass
 class PaperAccount:
@@ -105,8 +106,8 @@ class PaperAccount:
         entry=price*(1.0+self.slippage_pct/100.0) if direction=="LONG" else price*(1.0-self.slippage_pct/100.0)
         stop=entry-stop_distance if direction=="LONG" else entry+stop_distance; target=entry+stop_distance*rr if direction=="LONG" else entry-stop_distance*rr
         entry_fee=entry*quantity*self.fee_pct/100.0; self.cash-=entry_fee; self.last_prices[symbol]=float(price)
-        position=PaperPosition(symbol,direction,entry,quantity,stop,target,timestamp,entry_fee,quantity,stop_distance,risk_amount,False,price,price); self.positions[symbol]=position
-        event={"event":"OPEN","symbol":symbol,"direction":direction,"price":entry,"quantity":quantity,"entry_fee":entry_fee,"risk_amount":risk_amount,"risk_pct":effective_risk_pct,"timestamp":timestamp}
+        position=PaperPosition(symbol,direction,entry,quantity,stop,target,timestamp,entry_fee,quantity,stop_distance,risk_amount,False,price,price,stop); self.positions[symbol]=position
+        event={"event":"OPEN","symbol":symbol,"direction":direction,"price":entry,"quantity":quantity,"entry_fee":entry_fee,"risk_amount":risk_amount,"risk_pct":effective_risk_pct,"initial_stop_price":stop,"target_price":target,"timestamp":timestamp}
         if strategy_score is not None: event["strategy_score"]=int(strategy_score)
         if strategy_tier is not None: event["strategy_tier"]=str(strategy_tier)
         self.audit_log.append(event)
@@ -149,10 +150,11 @@ class PaperAccount:
         exit_fee=exit_price*position.quantity*self.fee_pct/100.0; pnl=gross-position.entry_fee-exit_fee
         self.cash+=gross-exit_fee; del self.positions[symbol]; self.loss_streak=self.loss_streak+1 if pnl<0 else 0
         if self.loss_streak>=8: self.cooldown_until=(self._parse_timestamp(timestamp)+timedelta(minutes=30)).isoformat()
-        stop_gap_pct=abs(float(price)-float(position.stop_price))/max(float(position.entry_price),1e-12)*100.0 if reason=="SL" else 0.0
+        current_stop_gap_pct=abs(float(price)-float(position.stop_price))/max(float(position.entry_price),1e-12)*100.0 if reason=="SL" else 0.0
+        initial_stop_gap_pct=position.initial_stop_distance/max(float(position.entry_price),1e-12)*100.0 if reason=="SL" else 0.0
         actual_loss=abs(float(pnl)) if pnl<0 else 0.0
         risk_to_actual_ratio=actual_loss/max(float(position.risk_amount),1e-12) if position.risk_amount>0 else 0.0
-        self.audit_log.append({"event":"CLOSE","symbol":symbol,"direction":position.direction,"price":exit_price,"quantity":position.quantity,"gross_pnl":gross,"entry_fee":position.entry_fee,"exit_fee":exit_fee,"pnl":pnl,"reason":reason,"timestamp":timestamp,"intended_risk_amount":position.risk_amount,"intended_stop_price":position.stop_price,"actual_loss_amount":actual_loss,"risk_to_actual_ratio":risk_to_actual_ratio,"stop_gap_pct":stop_gap_pct})
+        self.audit_log.append({"event":"CLOSE","symbol":symbol,"direction":position.direction,"price":exit_price,"quantity":position.quantity,"gross_pnl":gross,"entry_fee":position.entry_fee,"exit_fee":exit_fee,"pnl":pnl,"reason":reason,"timestamp":timestamp,"intended_risk_amount":position.risk_amount,"intended_stop_price":position.stop_price,"initial_stop_price":position.initial_stop_price,"current_stop_price":position.stop_price,"initial_stop_gap_pct":initial_stop_gap_pct,"stop_gap_pct":current_stop_gap_pct,"actual_loss_amount":actual_loss,"risk_to_actual_ratio":risk_to_actual_ratio})
         return float(pnl)
     def position_age_minutes(self,symbol:str,timestamp:Optional[str])->float:
         position=self.positions.get(str(symbol))
