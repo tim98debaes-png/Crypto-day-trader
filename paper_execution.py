@@ -47,7 +47,7 @@ class PaperExecutionLoop:
         self.observer.heartbeat(summary, active_candidate_id=str(active.get("id")) if active else None, timestamp=timestamp)
 
     def on_market(self, market: dict, candidate: Optional[dict] = None, exit_signal: bool = False) -> dict:
-        symbol = str(market["symbol"]); price = float(market["price"]); timestamp = market.get("timestamp")
+        symbol = str(market["symbol"]).upper(); price = float(market["price"]); timestamp = market.get("timestamp")
         self.account.equity(price, symbol)
         position = self.account.positions.get(symbol)
         if position is not None:
@@ -56,8 +56,6 @@ class PaperExecutionLoop:
             reward_hit = (price >= position.entry_price + risk_distance * self.account.risk_config.partial_take_profit_r
                           if position.direction == "LONG" else price <= position.entry_price - risk_distance * self.account.risk_config.partial_take_profit_r)
             actions = []
-            # Do not trail an unprofitable position. The initial stop remains
-            # intact until the trade has reached the partial-profit threshold.
             if reward_hit and not position.partial_taken:
                 partial_pnl = self.account.take_partial_profit(symbol, price, timestamp)
                 actions.append({"action":"PARTIAL_CLOSE","symbol":symbol,"pnl":partial_pnl})
@@ -68,8 +66,16 @@ class PaperExecutionLoop:
             time_stop = self.account.position_age_minutes(symbol, timestamp) >= self.account.risk_config.time_stop_minutes
             if stop_hit or target_hit or exit_signal or time_stop:
                 reason = "SL" if stop_hit else "TP" if target_hit else "TIME_STOP" if time_stop else "SIGNAL"
-                pnl = self.account.close_position(price, reason, timestamp, symbol=symbol); self._record_close(pnl); self._record_equity(price, symbol)
-                result = {"action":"CLOSE","symbol":symbol,"reason":reason,"pnl":pnl,"pre_actions":actions}; self._heartbeat(price,timestamp); return result
+                # A sampled market price can jump through a stop/target between
+                # polling intervals. Execute the deterministic paper fill at the
+                # trigger price rather than the later sample; this prevents a
+                # sampling artifact from turning 0.5% intended risk into a much
+                # larger loss (as observed in run #72).
+                trigger_price = position.stop_price if stop_hit else position.target_price if target_hit else price
+                fill_price = trigger_price if reason in {"SL", "TP"} else price
+                pnl = self.account.close_position(fill_price, reason, timestamp, symbol=symbol, trigger_price=trigger_price)
+                self._record_close(pnl); self._record_equity(fill_price, symbol)
+                result = {"action":"CLOSE","symbol":symbol,"reason":reason,"pnl":pnl,"trigger_price":trigger_price,"fill_price":fill_price,"pre_actions":actions}; self._heartbeat(fill_price,timestamp); return result
             self._record_equity(price, symbol)
             result = {"action":actions[0]["action"] if actions else "HOLD","symbol":symbol,"equity":self.account.equity()}
             if actions: result["pnl"] = actions[0]["pnl"]
@@ -92,9 +98,6 @@ class PaperExecutionLoop:
             active_candidate=dict(gate.active.candidate); candidate_id=gate.active.candidate_id
         requested_direction=str(market.get("direction", active_candidate.get("Direction", "LONG"))).upper()
         candidate_direction=str(active_candidate.get("Direction", requested_direction)).upper()
-        # A portfolio-level candidate is direction-neutral; the scanner owns
-        # the actual LONG/SHORT decision. Legacy symbol-specific candidates
-        # retain their explicit direction contract.
         if candidate_direction in {"BOTH", "ANY", "PORTFOLIO"}:
             direction=requested_direction
         else:
@@ -121,11 +124,6 @@ class PaperExecutionLoop:
         for value in curve:
             peak=max(peak,value)
             if peak>0: max_drawdown=max(max_drawdown,(peak-value)/peak*100)
-        result={"equity":self.account.equity(mark_price),"closed_trades":self.stats.closed_trades,"wins":self.stats.wins,"losses":self.stats.losses,
-                "win_rate_pct":self.stats.win_rate,"profit_factor":self.stats.profit_factor,"return_pct":(self.account.equity(mark_price)/self.account.capital-1.0)*100.0,
-                "max_drawdown_pct":max_drawdown,"open_positions":len(self.account.positions),"open_symbols":sorted(self.account.positions.keys()),
-                "open_risk_pct":self.account.open_risk_pct(),"loss_streak":self.account.loss_streak,"cooldown_until":self.account.cooldown_until,
-                "monitor_status":getattr(self.last_monitor_decision,"status",None),"monitor_reason":getattr(self.last_monitor_decision,"reason",None),
-                "monitor_breaches":list(getattr(self.last_monitor_decision,"breaches",()) or ())}
+        result={"equity":self.account.equity(mark_price),"closed_trades":self.stats.closed_trades,"wins":self.stats.wins,"losses":self.stats.losses,"win_rate_pct":self.stats.win_rate,"profit_factor":self.stats.profit_factor,"return_pct":(self.account.equity(mark_price)/self.account.capital-1.0)*100.0,"max_drawdown_pct":max_drawdown,"open_positions":len(self.account.positions),"open_symbols":sorted(self.account.positions.keys()),"open_risk_pct":self.account.open_risk_pct(),"loss_streak":self.account.loss_streak,"cooldown_until":self.account.cooldown_until,"symbol_cooldowns":dict(self.account.symbol_cooldown_until),"monitor_status":getattr(self.last_monitor_decision,"status",None),"monitor_reason":getattr(self.last_monitor_decision,"reason",None),"monitor_breaches":list(getattr(self.last_monitor_decision,"breaches",()) or ())}
         if _observe: self._heartbeat(mark_price or self.account.equity(),None)
         return result
