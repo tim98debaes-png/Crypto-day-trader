@@ -1,45 +1,35 @@
-"""Leakage-safe 5m/15m/1h feature construction for research.
-
-Higher-timeframe values are computed only from candles that have fully closed
-before the execution candle. The current 5m row itself is never included in a
-15m/1h aggregate used by that row.
-"""
+"""Leakage-safe MTF feature builder matching the legacy research indicators."""
 from __future__ import annotations
 import pandas as pd
-import numpy as np
+from app import indicators
 
 
-def _ohlcv(df):
-    x=df.copy(); x['timestamp']=pd.to_datetime(x['timestamp'],utc=True); x=x.sort_values('timestamp').drop_duplicates('timestamp').set_index('timestamp')
-    return x[['open','high','low','close','volume']].astype(float)
+def _base(df: pd.DataFrame) -> pd.DataFrame:
+    x=df.copy()
+    x["timestamp"]=pd.to_datetime(x["timestamp"],utc=True)
+    x=x.sort_values("timestamp").drop_duplicates("timestamp")
+    return indicators(x[["timestamp","open","high","low","close","volume"]].rename(columns={"timestamp":"time"}))
 
 
-def _ema(s,n): return s.ewm(span=n,adjust=False,min_periods=n).mean()
-def _rsi(s,n=14):
-    d=s.diff(); up=d.clip(lower=0); dn=-d.clip(upper=0); au=up.ewm(alpha=1/n,adjust=False,min_periods=n).mean(); ad=dn.ewm(alpha=1/n,adjust=False,min_periods=n).mean(); return 100-(100/(1+au/ad.replace(0,np.nan)))
-def _atr(x,n=14):
-    pc=x.close.shift(1); tr=pd.concat([(x.high-x.low),(x.high-pc).abs(),(x.low-pc).abs()],axis=1).max(axis=1); return tr.ewm(alpha=1/n,adjust=False,min_periods=n).mean()
+def _aggregate_ohlcv(base: pd.DataFrame, freq: str) -> pd.DataFrame:
+    x=base.copy().set_index("time")
+    grouped=x[["open","high","low","close","volume"]].resample(freq,origin="epoch",label="left",closed="left").agg({"open":"first","high":"max","low":"min","close":"last","volume":"sum"}).dropna().reset_index()
+    return grouped
 
 
-def _features(x, prefix=''):
-    y=x.copy(); c=y.close
-    y[f'{prefix}ema20']=_ema(c,20); y[f'{prefix}ema50']=_ema(c,50); y[f'{prefix}ema200']=_ema(c,200)
-    y[f'{prefix}rsi14']=_rsi(c,14); y[f'{prefix}atr14']=_atr(y,14)
-    fast=_ema(c,12); slow=_ema(c,26); y[f'{prefix}macd']=fast-slow; y[f'{prefix}macd_signal']=_ema(y[f'{prefix}macd'],9)
-    y[f'{prefix}vol_sma20']=y.volume.rolling(20,min_periods=20).mean()
-    return y
+def _htf_available(frame: pd.DataFrame, suffix: str) -> pd.DataFrame:
+    selected=frame[["time","close","ema20","ema50","ema200","rsi","macd_hist","adx","atr_pct","vol_ratio"]].copy()
+    selected["available"]=selected["time"].shift(-1)
+    selected=selected.dropna(subset=["available"])
+    return selected.rename(columns={"close":f"close_{suffix}","ema20":f"ema20_{suffix}","ema50":f"ema50_{suffix}","ema200":f"ema200_{suffix}","rsi":f"rsi{suffix}","macd_hist":f"macd{suffix}","adx":f"adx{suffix}","atr_pct":f"atrpct{suffix}","vol_ratio":f"vol{suffix}"}).drop(columns=["time"])
 
 
 def build_mtf_features(df5m: pd.DataFrame) -> pd.DataFrame:
-    """Return one row per closed 5m candle with 15m/1h closed-bar features."""
-    base=_features(_ohlcv(df5m),'5m_')
-    out=base.copy()
-    for rule,prefix in [('15min','15m_'),('1h','1h_')]:
-        agg=base[['open','high','low','close','volume']].resample(rule,label='right',closed='right').agg({'open':'first','high':'max','low':'min','close':'last','volume':'sum'}).dropna()
-        f=_features(agg,prefix)
-        # shift one completed higher-timeframe bar so the execution candle can
-        # only see the previous closed HTF candle.
-        f=f.shift(1)
-        out=out.join(f.add_suffix('_htf'),how='left')
-        out=out.ffill()
-    return out.reset_index()
+    """Build 5m execution features plus only previously closed 15m/1h data."""
+    d5=_base(df5m)
+    d15=indicators(_aggregate_ohlcv(d5,"15min"))
+    d1=indicators(_aggregate_ohlcv(d5,"1h"))
+    out=pd.merge_asof(d5.sort_values("time"),_htf_available(d15,"15").sort_values("available"),left_on="time",right_on="available",direction="backward")
+    out=pd.merge_asof(out.sort_values("time"),_htf_available(d1,"1h").sort_values("available"),left_on="time",right_on="available",direction="backward")
+    required=["atr","adx","ema20_15","ema50_15","ema200_15","ema20_1h","ema50_1h","ema200_1h","rsi15","rsi1h","adx15","adx1h"]
+    return out.dropna(subset=required).reset_index(drop=True)
