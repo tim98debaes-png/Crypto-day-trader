@@ -20,6 +20,10 @@ jobs:
   research:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    env:
+      START: ${{ inputs.start }}
+      END: ${{ inputs.end }}
+      MAX_ASSETS: ${{ inputs.max_assets }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -28,15 +32,11 @@ jobs:
       - name: Install research dependencies
         run: pip install -r requirements.txt
       - name: Download historical dataset
-        env:
-          START: ${{ inputs.start }}
-          END: ${{ inputs.end }}
-          MAX_ASSETS: ${{ inputs.max_assets }}
         run: |
           python research/run_step2b.py --start "$START" --end "$END" --interval 5m --max-assets "$MAX_ASSETS" --output data/historical
       - name: Build A/B/C benchmark report
         run: |
-          python research/run_step2b_benchmark.py --data data/historical --start "$START" --end "$END" --output artifacts/step2b
+          python -m research.run_step2b_benchmark --data data/historical --start "$START" --end "$END" --output artifacts/step2b
       - name: Validate research modules and benchmark output
         run: |
           python -m py_compile research/*.py
