@@ -1,0 +1,45 @@
+name: Step 2b Historical A-B-C Research
+
+on:
+  workflow_dispatch:
+    inputs:
+      start:
+        description: UTC start date/time
+        required: true
+        default: '2026-05-01T00:00:00Z'
+      end:
+        description: UTC end date/time
+        required: true
+        default: '2026-08-01T00:00:00Z'
+      max_assets:
+        description: Maximum scanner-universe assets
+        required: true
+        default: '50'
+
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install research dependencies
+        run: pip install -r requirements.txt
+      - name: Download historical dataset
+        env:
+          START: ${{ inputs.start }}
+          END: ${{ inputs.end }}
+          MAX_ASSETS: ${{ inputs.max_assets }}
+        run: |
+          python research/run_step2b.py --start "$START" --end "$END" --interval 5m --max-assets "$MAX_ASSETS" --output data/historical
+      - name: Validate research modules
+        run: |
+          python -m py_compile research/historical_data.py research/run_step2b.py research/legacy_strategy.py research/step2b_adapters.py
+          pytest -q tests/test_multi_position_backtest.py
+      - name: Upload dataset manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: step2b-manifest
+          path: data/historical/manifest.json
