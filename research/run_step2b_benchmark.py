@@ -20,13 +20,11 @@ def _normalize_frame(path: Path) -> pd.DataFrame:
     frame = pd.read_json(path, lines=True)
     if frame.empty:
         return frame
-
     if "timestamp" not in frame.columns:
         for alias in ("open_time", "openTime", "time", "ts"):
             if alias in frame.columns:
                 frame = frame.rename(columns={alias: "timestamp"})
                 break
-
     missing = REQUIRED_COLUMNS - set(frame.columns)
     missing_timestamp = "timestamp" not in frame.columns
     if missing_timestamp or missing:
@@ -34,7 +32,6 @@ def _normalize_frame(path: Path) -> pd.DataFrame:
             f"Invalid historical candle schema in {path}: "
             f"missing timestamp={missing_timestamp}, columns={sorted(map(str, frame.columns))}"
         )
-
     frame = frame.copy()
     frame["symbol"] = path.stem.upper()
     raw_timestamp = frame["timestamp"]
@@ -60,10 +57,14 @@ def load_rows(root: Path) -> dict[str, pd.DataFrame]:
 
 
 def build_symbol_features(raw: pd.DataFrame) -> pd.DataFrame:
-    """Build MTF features while preserving the canonical execution timestamp."""
-    f = build_mtf_features(raw[["timestamp", "open", "high", "low", "close", "volume"]])
-    f = f.copy()
-    f["timestamp"] = pd.to_datetime(f["time"], utc=True)
+    """Build MTF features and preserve the canonical research timestamp."""
+    f = build_mtf_features(raw[["timestamp", "open", "high", "low", "close", "volume"]]).copy()
+    if "timestamp" not in f.columns:
+        if "time" in f.columns:
+            f = f.rename(columns={"time": "timestamp"})
+        else:
+            raise RuntimeError("MTF feature builder returned neither timestamp nor time")
+    f["timestamp"] = pd.to_datetime(f["timestamp"], utc=True)
     return f
 
 
@@ -114,41 +115,25 @@ def main():
     p.add_argument("--end", required=True)
     p.add_argument("--output", required=True)
     a = p.parse_args()
-
     raw = load_rows(Path(a.data))
     params = candidate_grid()[0]
-    features = {}
-    maps = {}
-    rows = []
+    features, maps, rows = {}, {}, []
     for symbol, frame in raw.items():
         f = build_symbol_features(frame)
         f["symbol"] = symbol
         features[symbol] = f
         maps[symbol] = precompute_signals(f, params)
         rows.extend(f.to_dict("records"))
-
     rows.sort(key=lambda r: (str(r["timestamp"]), str(r["symbol"])))
     if min((len(f) for f in features.values()), default=0) < 250:
         raise RuntimeError("Insufficient history for MTF benchmark")
-
     results = {}
     for strategy in ("A", "B", "C"):
         result = run_strategy(features, maps, strategy, rows)
         results[strategy] = {"label": {"A": "LEGACY", "B": "CURRENT", "C": "HYBRID"}[strategy], **result.summary()}
-
     out = Path(a.output)
     out.mkdir(parents=True, exist_ok=True)
-    report = {
-        "schema_version": 2,
-        "status": "EXECUTION_COMPLETE",
-        "start": a.start,
-        "end": a.end,
-        "symbols": len(features),
-        "candles": sum(len(x) for x in features.values()),
-        "fixed_legacy_candidate": params,
-        "execution": {"capital": 1000.0, "risk_pct": 0.5, "fee_pct": 0.1, "slippage_pct": 0.02, "max_daily_loss_pct": 3.0},
-        "results": results,
-    }
+    report = {"schema_version": 2, "status": "EXECUTION_COMPLETE", "start": a.start, "end": a.end, "symbols": len(features), "candles": sum(len(x) for x in features.values()), "fixed_legacy_candidate": params, "execution": {"capital": 1000.0, "risk_pct": 0.5, "fee_pct": 0.1, "slippage_pct": 0.02, "max_daily_loss_pct": 3.0}, "results": results}
     (out / "ab_c_report.json").write_text(json.dumps(report, indent=2, default=str) + "\n", encoding="utf-8")
     with (out / "ab_c_report.csv").open("w", newline="", encoding="utf-8") as handle:
         fields = ["strategy", "label", "initial_capital", "final_equity", "pnl", "return_pct", "max_drawdown_pct", "closed_trades", "wins", "losses", "win_rate_pct", "profit_factor"]
@@ -156,8 +141,8 @@ def main():
         writer.writeheader()
         for key, value in results.items():
             writer.writerow({"strategy": key, **value})
-
     print(json.dumps({"status": report["status"], "symbols": len(features), "candles": report["candles"], "results": results}, indent=2, default=str))
 
 
-if __name__ == "__main__": main()
+if __name__ == "__main__":
+    main()
