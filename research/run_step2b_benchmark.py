@@ -60,7 +60,13 @@ def load_rows(root: Path) -> dict[str, pd.DataFrame]:
 
 
 def build_symbol_features(raw: pd.DataFrame) -> pd.DataFrame:
-    return build_mtf_features(raw[["timestamp", "open", "high", "low", "close", "volume"]])
+    """Build MTF features while preserving the canonical execution timestamp."""
+    f = build_mtf_features(raw[["timestamp", "open", "high", "low", "close", "volume"]])
+    # build_mtf_features uses `time` internally and intentionally returns it.
+    # The portfolio benchmark contract uses the canonical `timestamp` key.
+    f = f.copy()
+    f["timestamp"] = pd.to_datetime(f["time"], utc=True)
+    return f
 
 
 def precompute_signals(features: pd.DataFrame, params: dict) -> dict[int, dict]:
