@@ -65,6 +65,40 @@ jobs:
           tests/test_phase34_signal_gate.py tests/test_phase34_end_to_end.py tests/test_phase34_paper_run.py
       - name: Phase 35 Belgian tax compliance tests
         run: python -m pytest -q tests/test_belgian_tax_compliance.py
-      # Full validation intentionally remains the final release gate.
       - name: Full test suite
         run: python -m pytest -q
+
+  step2b-benchmark:
+    name: Step 2b A-B-C benchmark
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    env:
+      PYTHONPATH: ${{ github.workspace }}
+      START: '2026-05-01T00:00:00Z'
+      END: '2026-08-01T00:00:00Z'
+      MAX_ASSETS: '50'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install research dependencies
+        run: pip install -r requirements.txt pytest
+      - name: Download historical dataset
+        run: python research/run_step2b.py --start "$START" --end "$END" --interval 5m --max-assets "$MAX_ASSETS" --output data/historical
+      - name: Build A-B-C benchmark report
+        run: python -m research.run_step2b_benchmark --data data/historical --start "$START" --end "$END" --output artifacts/step2b
+      - name: Validate benchmark output
+        run: |
+          python -m py_compile research/*.py
+          test -s artifacts/step2b/ab_c_report.json
+          test -s artifacts/step2b/ab_c_report.csv
+      - name: Upload Step 2b report
+        uses: actions/upload-artifact@v4
+        with:
+          name: step2b-ab-c-report
+          path: artifacts/step2b/
