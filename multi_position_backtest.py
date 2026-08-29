@@ -35,12 +35,12 @@ class MultiPositionBacktester:
     @staticmethod
     def _ohlc(row):
         close=float(row['close']); high=float(row.get('high',close)); low=float(row.get('low',close))
-        if high<=0 or low<=0 or low>high or not low<=close<=high: raise ValueError('invalid candle high/low')
+        if high<=0 or low<=0 or low>high or not low<=close<=high: raise ValueError('invalid candle high/low: values must be positive and ordered')
         return high,low,close
     @staticmethod
     def _exit_trigger(position, high, low):
-        if position.direction=='LONG': stop_hit, target_hit=low<=position.stop_price, high>=position.target_price
-        else: stop_hit, target_hit=high>=position.stop_price, low<=position.target_price
+        if position.direction=='LONG': stop_hit,target_hit=low<=position.stop_price, high>=position.target_price
+        else: stop_hit,target_hit=high>=position.stop_price, low<=position.target_price
         if stop_hit: return 'SL',position.stop_price
         if target_hit: return 'TP',position.target_price
         return None
@@ -57,7 +57,11 @@ class MultiPositionBacktester:
                     reason,trigger=event; account.close_position(trigger,reason,timestamp,symbol=symbol,trigger_price=trigger)
             signal=signal_provider(row) or {}; action=str(signal.get('action','WAIT')).upper()
             if action in {'LONG','SHORT'} and symbol not in account.positions:
-                account.open_position(symbol=symbol,direction=action,price=close,stop_distance=float(signal['stop_distance']),rr=float(signal.get('rr',2)),timestamp=timestamp,strategy_score=signal.get('strategy_score'),strategy_tier=signal.get('strategy_tier'))
+                try:
+                    account.open_position(symbol=symbol,direction=action,price=close,stop_distance=float(signal['stop_distance']),rr=float(signal.get('rr',2)),timestamp=timestamp,strategy_score=signal.get('strategy_score'),strategy_tier=signal.get('strategy_tier'))
+                except RuntimeError as exc:
+                    if not str(exc).startswith('paper account is not allowed to open a position'):
+                        raise
             elif action=='CLOSE' and symbol in account.positions:
                 account.close_position(close,'SIGNAL',timestamp,symbol=symbol,trigger_price=close)
             equity_curve.append({'timestamp':timestamp or '','equity':round(account.equity(),8),'position_count':len(account.positions),'open_risk_pct':round(account.open_risk_pct(),8)})
