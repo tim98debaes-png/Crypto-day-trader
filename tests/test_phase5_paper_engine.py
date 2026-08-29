@@ -24,17 +24,7 @@ def test_short_position_has_correct_directional_pnl():
 
 
 def test_daily_loss_guard_blocks_new_position():
-    # This fixture intentionally uses 10% single-position risk so the first
-    # trade can create the -4% loss needed to exercise the daily-loss guard.
-    # The production/default aggregate cap remains the conservative 4% cap.
-    account = PaperAccount(
-        capital=1000,
-        risk_pct=10,
-        fee_pct=0.0,
-        slippage_pct=0.0,
-        max_daily_loss_pct=3.0,
-        risk_config=RiskConfig(max_risk_pct_per_trade=10.0, max_total_open_risk_pct=10.0),
-    )
+    account = PaperAccount(capital=1000, risk_pct=10, fee_pct=0.0, slippage_pct=0.0, max_daily_loss_pct=3.0, risk_config=RiskConfig(max_risk_pct_per_trade=10.0, max_total_open_risk_pct=10.0))
     account.open_position("BTCUSDT", "LONG", 100, 10, 1)
     account.close_position(96, reason="SL")
     assert account.daily_loss_pct() == pytest.approx(-4.0)
@@ -48,3 +38,21 @@ def test_audit_log_records_open_and_close():
     account.close_position(102, reason="TP")
     assert [event["event"] for event in account.audit_log] == ["OPEN", "CLOSE"]
     assert account.audit_log[-1]["reason"] == "TP"
+
+
+def test_loss_close_blocks_same_symbol_reentry_during_cooldown():
+    account = PaperAccount(capital=1000, risk_pct=1, fee_pct=0.0, slippage_pct=0.0)
+    account.open_position("ENAUSDT", "LONG", 100, 2, 2, timestamp="2026-08-23T10:00:00+00:00")
+    account.close_position(98, reason="SL", timestamp="2026-08-23T10:05:00+00:00")
+    with pytest.raises(RuntimeError, match="not allowed"):
+        account.open_position("ENAUSDT", "SHORT", 100, 2, 2, timestamp="2026-08-23T10:10:00+00:00")
+    account.open_position("ENAUSDT", "SHORT", 100, 2, 2, timestamp="2026-08-23T10:21:00+00:00")
+
+
+def test_stop_fill_uses_trigger_price_and_tracks_gap_separately():
+    account = PaperAccount(capital=1000, risk_pct=1, fee_pct=0.0, slippage_pct=0.0)
+    position = account.open_position("BTCUSDT", "LONG", 100, 2, 2, timestamp="2026-08-23T10:00:00+00:00")
+    pnl = account.close_position(position.stop_price, reason="SL", timestamp="2026-08-23T10:05:00+00:00", trigger_price=position.stop_price)
+    assert pnl == pytest.approx(-10.0)
+    assert account.audit_log[-1]["risk_to_actual_ratio"] == pytest.approx(1.0)
+    assert account.audit_log[-1]["execution_gap_pct"] == pytest.approx(0.0)
