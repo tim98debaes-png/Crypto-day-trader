@@ -5,20 +5,14 @@ a correlation estimate is predictive; they simply reduce concentration when
 assets have recently moved together.
 """
 from __future__ import annotations
-
 from dataclasses import dataclass
 from math import sqrt
 from typing import Mapping, Sequence
 
-
 @dataclass(frozen=True)
 class RiskConfig:
-    # Keep the existing 0.5% research risk as the normal size; never increase
-    # risk merely because the portfolio has more signals.
     standard_risk_pct: float = 0.50
     max_risk_pct_per_trade: float = 1.00
-    # The older 5-hour run reached 16.35% max drawdown. Cap aggregate open
-    # risk much lower while we validate the repaired direction/execution path.
     max_total_open_risk_pct: float = 4.0
     max_open_positions: int = 4
     soft_open_positions: int = 3
@@ -31,12 +25,19 @@ class RiskConfig:
     time_stop_minutes: int = 360
     volatility_floor_pct: float = 0.05
     volatility_ceiling_pct: float = 0.80
+    # Run #72 showed ENA being re-entered LONG -> SHORT -> LONG inside one hour.
+    # A short asset-specific cooldown reduces this churn without imposing a
+    # global trading halt after one bad trade.
+    loss_reentry_cooldown_minutes: int = 15
+    win_reentry_cooldown_minutes: int = 5
 
     def __post_init__(self) -> None:
         if not 0 < self.standard_risk_pct <= self.max_risk_pct_per_trade:
             raise ValueError("invalid standard risk")
         if self.max_open_positions < 1 or self.soft_open_positions < 1:
             raise ValueError("position caps must be positive")
+        if self.soft_open_positions > self.max_open_positions:
+            raise ValueError("soft position cap cannot exceed hard cap")
         if self.max_positions_per_sector < 1:
             raise ValueError("sector cap must be positive")
         if not 0 < self.max_pairwise_correlation <= 1:
@@ -51,14 +52,11 @@ class RiskConfig:
             raise ValueError("time stop must be positive")
         if self.volatility_floor_pct < 0 or self.volatility_ceiling_pct <= self.volatility_floor_pct:
             raise ValueError("invalid volatility range")
+        if self.loss_reentry_cooldown_minutes < 0 or self.win_reentry_cooldown_minutes < 0:
+            raise ValueError("re-entry cooldowns must be non-negative")
 
-
-# Shared default configuration used by the paper-session integration.
 RISK_CONFIG = RiskConfig()
 
-
-# Conservative, static research taxonomy. Unknown assets are intentionally put
-# in OTHER rather than guessing a sector.
 _SECTORS: dict[str, str] = {
     "BTCUSDT": "BTC", "ETHUSDT": "L1", "SOLUSDT": "L1", "ADAUSDT": "L1",
     "AVAXUSDT": "L1", "SUIUSDT": "L1", "TONUSDT": "L1", "DOTUSDT": "L1",
@@ -75,10 +73,8 @@ _SECTORS: dict[str, str] = {
     "TAOUSDT": "AI", "ENAUSDT": "DEFI", "PYTHUSDT": "INFRA", "THETAUSDT": "AI",
 }
 
-
 def sector_for(symbol: str) -> str:
     return _SECTORS.get(str(symbol).upper(), "OTHER")
-
 
 def pearson_correlation(a: Sequence[float], b: Sequence[float]) -> float | None:
     n = min(len(a), len(b))
@@ -92,9 +88,7 @@ def pearson_correlation(a: Sequence[float], b: Sequence[float]) -> float | None:
         return None
     return sum(u * v for u, v in zip(dx, dy)) / denom
 
-
 def return_series(prices: Sequence[float]) -> list[float]:
-    """Convert any sequence-like price history, including deque, to returns."""
     values = list(prices)
     result: list[float] = []
     for previous, current in zip(values, values[1:]):
@@ -102,15 +96,7 @@ def return_series(prices: Sequence[float]) -> list[float]:
             result.append(current / previous - 1.0)
     return result
 
-
-def exceeds_correlation_limit(
-    symbol: str,
-    open_symbols: Sequence[str],
-    histories: Mapping[str, Sequence[float]],
-    *,
-    threshold: float = 0.75,
-    window: int = 6,
-) -> bool:
+def exceeds_correlation_limit(symbol: str, open_symbols: Sequence[str], histories: Mapping[str, Sequence[float]], *, threshold: float = 0.75, window: int = 6) -> bool:
     candidate_returns = return_series(histories.get(symbol, ()))[-window:]
     for other in open_symbols:
         other_returns = return_series(histories.get(other, ()))[-window:]
@@ -118,7 +104,6 @@ def exceeds_correlation_limit(
         if corr is not None and corr >= threshold:
             return True
     return False
-
 
 def sector_position_count(symbol: str, open_symbols: Sequence[str]) -> int:
     sector = sector_for(symbol)
