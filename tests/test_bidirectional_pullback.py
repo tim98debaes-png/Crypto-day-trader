@@ -18,11 +18,14 @@ def test_invalid_direction_is_rejected():
 
 
 def test_touch_without_reclaim_is_rejected():
-    prices = [100.0, 100.3, 100.5, 100.2, 99.7, 99.5, 99.6, 99.7, 99.6, 99.5, 99.6, 99.7]
+    # Touch the pullback area, but fail reclaim/follow-through/structure so
+    # the relaxed 3/4 bounce gate is still not satisfied.
+    prices = [100.0, 100.3, 100.5, 100.2, 99.7, 99.5, 99.6, 99.7, 99.6, 99.5, 99.6, 99.5]
     ready, reason, _score, confirmations = entry_signal_details(prices, "LONG")
     assert not ready
     assert reason in {"bounce_not_confirmed", "momentum_not_confirmed", "trend_not_confirmed"}
-    assert not confirmations.get("pullback_bounce", False)
+    assert confirmations.get("ema_reclaim", True) is False
+    assert confirmations.get("bounce_score", 4) < 3
 
 
 def test_exit_logic_rejects_invalid_direction():
