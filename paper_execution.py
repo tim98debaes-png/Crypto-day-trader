@@ -52,14 +52,17 @@ class PaperExecutionLoop:
         position = self.account.positions.get(symbol)
         if position is not None:
             atr_distance = float(market.get("atr_distance", position.initial_stop_distance / 3.0))
-            self.account.update_trailing_stop(symbol, price, atr_distance)
             risk_distance = position.initial_stop_distance
             reward_hit = (price >= position.entry_price + risk_distance * self.account.risk_config.partial_take_profit_r
                           if position.direction == "LONG" else price <= position.entry_price - risk_distance * self.account.risk_config.partial_take_profit_r)
             actions = []
+            # Do not trail an unprofitable position. The initial stop remains
+            # intact until the trade has reached the partial-profit threshold.
             if reward_hit and not position.partial_taken:
                 partial_pnl = self.account.take_partial_profit(symbol, price, timestamp)
                 actions.append({"action":"PARTIAL_CLOSE","symbol":symbol,"pnl":partial_pnl})
+            if position.partial_taken:
+                self.account.update_trailing_stop(symbol, price, atr_distance)
             stop_hit = price <= position.stop_price if position.direction == "LONG" else price >= position.stop_price
             target_hit = price >= position.target_price if position.direction == "LONG" else price <= position.target_price
             time_stop = self.account.position_age_minutes(symbol, timestamp) >= self.account.risk_config.time_stop_minutes
@@ -87,9 +90,17 @@ class PaperExecutionLoop:
             if not gate.allowed:
                 self._record_equity(price,symbol); result={"action":"WAIT","reason":gate.reason}; self._heartbeat(price,timestamp); return result
             active_candidate=dict(gate.active.candidate); candidate_id=gate.active.candidate_id
-        direction=str(active_candidate.get("Direction",market.get("direction","LONG"))).upper(); requested_direction=str(market.get("direction",direction)).upper()
-        if direction != requested_direction:
-            self._record_equity(price,symbol); result={"action":"WAIT","reason":"candidate_direction_mismatch"}; self._heartbeat(price,timestamp); return result
+        requested_direction=str(market.get("direction", active_candidate.get("Direction", "LONG"))).upper()
+        candidate_direction=str(active_candidate.get("Direction", requested_direction)).upper()
+        # A portfolio-level candidate is direction-neutral; the scanner owns
+        # the actual LONG/SHORT decision. Legacy symbol-specific candidates
+        # retain their explicit direction contract.
+        if candidate_direction in {"BOTH", "ANY", "PORTFOLIO"}:
+            direction=requested_direction
+        else:
+            direction=candidate_direction
+            if direction != requested_direction:
+                self._record_equity(price,symbol); result={"action":"WAIT","reason":"candidate_direction_mismatch"}; self._heartbeat(price,timestamp); return result
         try: rr=float(active_candidate.get("RR",active_candidate.get("rr",market.get("rr",2.0))))
         except (TypeError,ValueError): rr=float(market.get("rr",2.0))
         try:
