@@ -4,7 +4,7 @@ from strategy_risk_controls import RiskConfig
 
 
 def test_hard_position_cap_and_total_risk_cap():
-    cfg = RiskConfig(max_open_positions=2, max_total_open_risk_pct=1.0)
+    cfg = RiskConfig(max_open_positions=2, soft_open_positions=2, max_total_open_risk_pct=1.0)
     account = PaperAccount(capital=1000, risk_pct=0.5, fee_pct=0, slippage_pct=0, risk_config=cfg)
     account.open_position("BTCUSDT", "LONG", 100, 1, 2, timestamp="2026-08-27T10:00:00+00:00")
     account.open_position("ETHUSDT", "LONG", 100, 1, 2, timestamp="2026-08-27T10:01:00+00:00")
