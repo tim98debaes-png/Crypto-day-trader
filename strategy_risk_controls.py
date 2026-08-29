@@ -1,8 +1,8 @@
 """Research-stage portfolio risk controls used by the paper strategy.
 
 The controls are deliberately deterministic and fail closed. They do not claim
-that a correlation estimate is predictive; they simply reduce concentration
-when assets have recently moved together.
+a correlation estimate is predictive; they simply reduce concentration when
+assets have recently moved together.
 """
 from __future__ import annotations
 
@@ -17,9 +17,11 @@ class RiskConfig:
     # risk merely because the portfolio has more signals.
     standard_risk_pct: float = 0.50
     max_risk_pct_per_trade: float = 1.00
-    max_total_open_risk_pct: float = 12.0
-    max_open_positions: int = 8
-    soft_open_positions: int = 6
+    # The older 5-hour run reached 16.35% max drawdown. Cap aggregate open
+    # risk much lower while we validate the repaired direction/execution path.
+    max_total_open_risk_pct: float = 4.0
+    max_open_positions: int = 4
+    soft_open_positions: int = 3
     max_positions_per_sector: int = 2
     max_pairwise_correlation: float = 0.75
     correlation_window: int = 6
@@ -35,8 +37,6 @@ class RiskConfig:
             raise ValueError("invalid standard risk")
         if self.max_open_positions < 1 or self.soft_open_positions < 1:
             raise ValueError("position caps must be positive")
-        # A deployment may deliberately choose a hard cap below the default
-        # soft threshold. The hard cap wins; this is a valid configuration.
         if self.max_positions_per_sector < 1:
             raise ValueError("sector cap must be positive")
         if not 0 < self.max_pairwise_correlation <= 1:
