@@ -34,12 +34,17 @@ jobs:
           MAX_ASSETS: ${{ inputs.max_assets }}
         run: |
           python research/run_step2b.py --start "$START" --end "$END" --interval 5m --max-assets "$MAX_ASSETS" --output data/historical
-      - name: Validate research modules
+      - name: Build A/B/C benchmark report
         run: |
-          python -m py_compile research/historical_data.py research/run_step2b.py research/legacy_strategy.py research/step2b_adapters.py
+          python research/run_step2b_benchmark.py --data data/historical --start "$START" --end "$END" --output artifacts/step2b
+      - name: Validate research modules and benchmark output
+        run: |
+          python -m py_compile research/*.py
+          test -s artifacts/step2b/ab_c_report.json
+          test -s artifacts/step2b/ab_c_report.csv
           pytest -q tests/test_multi_position_backtest.py
-      - name: Upload dataset manifest
+      - name: Upload Step 2b report
         uses: actions/upload-artifact@v4
         with:
-          name: step2b-manifest
-          path: data/historical/manifest.json
+          name: step2b-ab-c-report
+          path: artifacts/step2b/
