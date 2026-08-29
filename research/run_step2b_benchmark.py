@@ -21,25 +21,26 @@ def _normalize_frame(path: Path) -> pd.DataFrame:
     if frame.empty:
         return frame
 
-    # Accept both our canonical schema and common Binance/open-time aliases.
     if "timestamp" not in frame.columns:
         for alias in ("open_time", "openTime", "time", "ts"):
             if alias in frame.columns:
                 frame = frame.rename(columns={alias: "timestamp"})
                 break
+
     missing = REQUIRED_COLUMNS - set(frame.columns)
-    if "timestamp" not in frame.columns or missing:
+    missing_timestamp = "timestamp" not in frame.columns
+    if missing_timestamp or missing:
         raise RuntimeError(
             f"Invalid historical candle schema in {path}: "
-            f"missing timestamp={"timestamp" not in frame.columns}, "
-            f"columns={sorted(map(str, frame.columns))}"
+            f"missing timestamp={missing_timestamp}, columns={sorted(map(str, frame.columns))}"
         )
 
     frame = frame.copy()
     frame["symbol"] = path.stem.upper()
-    frame["timestamp"] = pd.to_datetime(frame["timestamp"], utc=True, unit="ms", errors="coerce")
+    raw_timestamp = frame["timestamp"]
+    frame["timestamp"] = pd.to_datetime(raw_timestamp, utc=True, unit="ms", errors="coerce")
     if frame["timestamp"].isna().all():
-        frame["timestamp"] = pd.to_datetime(frame["timestamp"], utc=True, errors="coerce")
+        frame["timestamp"] = pd.to_datetime(raw_timestamp, utc=True, errors="coerce")
     frame = frame.dropna(subset=["timestamp"])
     if frame.empty:
         raise RuntimeError(f"No valid timestamps found in {path}")
