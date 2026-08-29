@@ -60,7 +60,11 @@ def load_rows(root: Path) -> dict[str, pd.DataFrame]:
 
 
 def build_symbol_features(raw: pd.DataFrame) -> pd.DataFrame:
-    return build_mtf_features(raw[["timestamp", "open", "high", "low", "close", "volume"]])
+    """Build MTF features while preserving the canonical execution timestamp."""
+    f = build_mtf_features(raw[["timestamp", "open", "high", "low", "close", "volume"]])
+    f = f.copy()
+    f["timestamp"] = pd.to_datetime(f["time"], utc=True)
+    return f
 
 
 def precompute_signals(features: pd.DataFrame, params: dict) -> dict[int, dict]:
@@ -156,5 +160,4 @@ def main():
     print(json.dumps({"status": report["status"], "symbols": len(features), "candles": report["candles"], "results": results}, indent=2, default=str))
 
 
-if __name__ == "__main__":
-    main()
+if __name__ == "__main__": main()
