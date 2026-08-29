@@ -3,7 +3,7 @@ from optimizer_dashboard import build_signal_strategy_factory, optimize_candles,
 
 def candles():
     return [
-        {"timestamp": f"2026-01-01T00:{i * 2:02d}:00+00:00", "close": 100 + i, "long_score": 2.0 if i == 0 else 0.0, "short_score": 2.0 if i == 2 else 0.0, "stop_distance": 1.0}
+        {"timestamp": f"2026-01-01T00:{i * 2:02d}:00+00:00", "symbol": f"BACKTEST{i}", "close": 100 + i, "long_score": 2.0 if i == 0 else 0.0, "short_score": 2.0 if i == 2 else 0.0, "stop_distance": 1.0}
         for i in range(6)
     ]
 
