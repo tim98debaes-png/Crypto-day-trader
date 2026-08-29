@@ -24,9 +24,17 @@ def test_short_position_has_correct_directional_pnl():
 
 
 def test_daily_loss_guard_blocks_new_position():
-    account = PaperAccount(capital=1000, risk_pct=10, fee_pct=0.0, slippage_pct=0.0,
-                           max_daily_loss_pct=3.0,
-                           risk_config=RiskConfig(max_risk_pct_per_trade=10.0))
+    # This fixture intentionally uses 10% single-position risk so the first
+    # trade can create the -4% loss needed to exercise the daily-loss guard.
+    # The production/default aggregate cap remains the conservative 4% cap.
+    account = PaperAccount(
+        capital=1000,
+        risk_pct=10,
+        fee_pct=0.0,
+        slippage_pct=0.0,
+        max_daily_loss_pct=3.0,
+        risk_config=RiskConfig(max_risk_pct_per_trade=10.0, max_total_open_risk_pct=10.0),
+    )
     account.open_position("BTCUSDT", "LONG", 100, 10, 1)
     account.close_position(96, reason="SL")
     assert account.daily_loss_pct() == pytest.approx(-4.0)
