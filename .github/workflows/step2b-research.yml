@@ -1,6 +1,9 @@
 name: Step 2b Historical A-B-C Research
 
 on:
+  push:
+    paths:
+      - '.github/workflows/step2b-research.yml'
   workflow_dispatch:
     inputs:
       start:
@@ -21,9 +24,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
-      START: ${{ inputs.start }}
-      END: ${{ inputs.end }}
-      MAX_ASSETS: ${{ inputs.max_assets }}
+      START: ${{ inputs.start || '2026-05-01T00:00:00Z' }}
+      END: ${{ inputs.end || '2026-08-01T00:00:00Z' }}
+      MAX_ASSETS: ${{ inputs.max_assets || '50' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
