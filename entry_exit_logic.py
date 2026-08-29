@@ -27,16 +27,22 @@ def _entry_metrics(prices: list[float], direction: str):
     if direction == "LONG":
         touched = min(pullback_window) <= fast * 1.0015
         reclaimed = price > fast * 1.0015
-        bounce = confirmation_window[-1] > confirmation_window[0] * 1.0004
-        higher_low = confirmation_window[-1] > min(pullback_window) * 1.0005
-        confirmed_bounce = touched and reclaimed and bounce and higher_low
+        followthrough = confirmation_window[-1] > confirmation_window[0] * 1.0004
+        structure = confirmation_window[-1] > min(pullback_window) * 1.0005
     else:
         touched = max(pullback_window) >= fast * 0.9985
         reclaimed = price < fast * 0.9985
-        bounce = confirmation_window[-1] < confirmation_window[0] * 0.9996
-        lower_high = confirmation_window[-1] < max(pullback_window) * 0.9995
-        confirmed_bounce = touched and reclaimed and bounce and lower_high
-    return fast, slow, short, medium, positive, negative, confirmed_bounce, touched
+        followthrough = confirmation_window[-1] < confirmation_window[0] * 0.9996
+        structure = confirmation_window[-1] < max(pullback_window) * 0.9995
+    bounce_checks = {
+        "pullback_touch": touched,
+        "ema_reclaim": reclaimed,
+        "directional_followthrough": followthrough,
+        "pullback_structure": structure,
+    }
+    bounce_score = sum(bounce_checks.values())
+    confirmed_bounce = bounce_score >= 3
+    return fast, slow, short, medium, positive, negative, confirmed_bounce, touched, bounce_score, bounce_checks
 
 
 def entry_signal_details(prices: list[float], direction: str = "LONG"):
@@ -46,15 +52,21 @@ def entry_signal_details(prices: list[float], direction: str = "LONG"):
     if direction not in {"LONG", "SHORT"}:
         return False, "invalid_direction", 0, {}
     price = prices[-1]
-    fast, slow, short, medium, positive, negative, confirmed_bounce, touched = _entry_metrics(prices, direction)
+    fast, slow, short, medium, positive, negative, confirmed_bounce, touched, bounce_score, bounce_checks = _entry_metrics(prices, direction)
     confirmations = {
         "trend": fast >= slow if direction == "LONG" else fast <= slow,
         "price_near_fast": abs(price / fast - 1.0) <= 0.0065,
         "medium_momentum": medium >= 0.0005 if direction == "LONG" else medium <= -0.0005,
         "short_momentum": short >= 0.0005 if direction == "LONG" else short <= -0.0005,
         "positive_microstructure": positive >= 2 if direction == "LONG" else negative >= 2,
+        # Diagnostic only: deliberately excluded from the legacy 5-factor score.
+        "pullback_bounce": confirmed_bounce,
+        "bounce_score": bounce_score,
+        "bounce_checks": bounce_checks,
     }
-    score = sum(confirmations.values())
+    score = sum(confirmations[name] for name in (
+        "trend", "price_near_fast", "medium_momentum", "short_momentum", "positive_microstructure"
+    ))
     if direction == "LONG":
         if fast < slow * 0.9985 or price < slow * 0.997:
             return False, "trend_not_confirmed", score, confirmations
