@@ -18,4 +18,4 @@ def test_close_records_execution_risk_audit():
     assert event["intended_stop_price"] == position.stop_price
     assert event["actual_loss_amount"] == abs(pnl)
     assert event["risk_to_actual_ratio"] == 1.0
-    assert event["stop_gap_pct"] == 0.0
+    assert event["execution_gap_pct"] == 0.0
