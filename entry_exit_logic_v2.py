@@ -39,10 +39,10 @@ def entry_signal_details(prices: list[float], direction: str = "LONG"):
     if direction == "LONG":
         regime = fast > medium > slow and long_return > 0.0015
         touched = min(pullback) <= fast * 1.002
-        actual_pullback = min(pullback) / pullback[0] - 1.0 <= -0.0005
+        actual_pullback = any(pullback[i] < pullback[i - 1] for i in range(1, len(pullback)))
         reclaimed = price > fast * 1.001
         followthrough = trigger[-1] > trigger[0] * 1.0006 and trigger[-1] > trigger[-2]
-        structure = trigger[-1] > min(pullback) * 1.001
+        structure = trigger[-1] > trigger[0] * 1.0001 and trigger[-1] > min(pullback) * 1.001
         medium_ok = medium_return > 0.0010
         short_ok = short_return > 0.0003
         micro_ok = positive >= 2
@@ -55,10 +55,10 @@ def entry_signal_details(prices: list[float], direction: str = "LONG"):
     else:
         regime = fast < medium < slow and long_return < -0.0015
         touched = max(pullback) >= fast * 0.998
-        actual_pullback = max(pullback) / pullback[0] - 1.0 >= 0.0005
+        actual_pullback = any(pullback[i] > pullback[i - 1] for i in range(1, len(pullback)))
         reclaimed = price < fast * 0.999
         followthrough = trigger[-1] < trigger[0] * 0.9994 and trigger[-1] < trigger[-2]
-        structure = trigger[-1] < max(pullback) * 0.999
+        structure = trigger[-1] < trigger[0] * 0.9999 and trigger[-1] < max(pullback) * 0.999
         medium_ok = medium_return < -0.0010
         short_ok = short_return < -0.0003
         micro_ok = negative >= 2
@@ -69,6 +69,7 @@ def entry_signal_details(prices: list[float], direction: str = "LONG"):
         if positive == 3:
             return False, "short_term_reversal", 0, {"trend": True, "bounce_checks": {}}
 
+    pullback_return = (min(pullback) / pullback[0] - 1.0) if direction == "LONG" else (max(pullback) / pullback[0] - 1.0)
     confirmations = {
         "trend": regime,
         "price_near_fast": abs(price / fast - 1.0) <= 0.0065,
@@ -78,9 +79,15 @@ def entry_signal_details(prices: list[float], direction: str = "LONG"):
         "microstructure": micro_ok,
         "pullback_bounce": touched and actual_pullback and reclaimed and followthrough and structure,
         "bounce_score": int(touched) + int(actual_pullback) + int(reclaimed) + int(followthrough) + int(structure),
-        "bounce_checks": {"pullback_touch": touched, "actual_countertrend_pullback": actual_pullback, "ema_reclaim": reclaimed, "directional_followthrough": followthrough, "pullback_structure": structure},
+        "bounce_checks": {
+            "pullback_touch": touched,
+            "actual_countertrend_pullback": actual_pullback,
+            "ema_reclaim": reclaimed,
+            "directional_followthrough": followthrough,
+            "pullback_structure": structure,
+        },
         "regime_strength": abs(long_return),
-        "pullback_return": (min(pullback) / pullback[0] - 1.0) if direction == "LONG" else (max(pullback) / pullback[0] - 1.0),
+        "pullback_return": pullback_return,
     }
     score = sum(bool(confirmations[k]) for k in ("trend", "price_near_fast", "medium_momentum", "short_momentum", "positive_microstructure"))
     if not touched or not actual_pullback:
