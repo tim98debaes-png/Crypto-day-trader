@@ -25,11 +25,20 @@ def _htf_available(frame: pd.DataFrame, suffix: str) -> pd.DataFrame:
 
 
 def build_mtf_features(df5m: pd.DataFrame) -> pd.DataFrame:
-    """Build 5m execution features plus only previously closed 15m/1h data."""
+    """Build 5m execution features plus only previously closed 15m/1h data.
+
+    The research layer uses ``timestamp`` as its canonical event-time column.
+    Internally the legacy indicator implementation uses ``time``; convert back
+    before returning so downstream benchmark, portfolio, and validation code
+    never has to guess which timestamp schema is present.
+    """
     d5=_base(df5m)
     d15=indicators(_aggregate_ohlcv(d5,"15min"))
     d1=indicators(_aggregate_ohlcv(d5,"1h"))
     out=pd.merge_asof(d5.sort_values("time"),_htf_available(d15,"15").sort_values("available"),left_on="time",right_on="available",direction="backward")
     out=pd.merge_asof(out.sort_values("time"),_htf_available(d1,"1h").sort_values("available"),left_on="time",right_on="available",direction="backward")
     required=["atr","adx","ema20_15","ema50_15","ema200_15","ema20_1h","ema50_1h","ema200_1h","rsi15","rsi1h","adx15","adx1h"]
-    return out.dropna(subset=required).reset_index(drop=True)
+    out=out.dropna(subset=required).reset_index(drop=True)
+    if "time" in out.columns:
+        out=out.rename(columns={"time":"timestamp"})
+    return out
