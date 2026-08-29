@@ -82,7 +82,7 @@ def _audit_diagnostics(audit_log: list[dict]) -> dict:
             stats["losses"] += pnl < 0
             stats["gross_profit"] += max(pnl, 0.0)
             stats["gross_loss"] += max(-pnl, 0.0)
-        execution.append({key: event.get(key) for key in ("symbol", "direction", "price", "pnl", "reason", "intended_risk_amount", "intended_stop_price", "actual_loss_amount", "risk_to_actual_ratio", "stop_gap_pct", "timestamp")})
+        execution.append({key: event.get(key) for key in ("symbol", "direction", "price", "pnl", "reason", "intended_risk_amount", "intended_stop_price", "initial_stop_price", "current_stop_price", "initial_stop_gap_pct", "actual_loss_amount", "risk_to_actual_ratio", "stop_gap_pct", "timestamp")})
     return {
         "score_groups": {key: _finalize_trade_stats(value) for key, value in score_groups.items()},
         "tier_groups": {key: _finalize_trade_stats(value) for key, value in tier_groups.items()},
@@ -104,7 +104,7 @@ def run_multi_asset_paper_session(*, feed, loop: PaperExecutionLoop, duration_se
     history = {symbol: deque(maxlen=max(20, RISK_CONFIG.correlation_window + 12)) for symbol in symbols}
     failure = {symbol: 0 for symbol in symbols}
     quarantined: set[str] = set()
-    diagnostics = {"assets_attempted": 0, "liquidity_rejections": 0, "ranked_candidates": 0, "entry_momentum_rejections": 0, "entry_volatility_rejections": 0, "entry_trend_rejections": 0, "entry_overextension_rejections": 0, "entry_reversal_rejections": 0, "pullback_rejections": 0, "bounce_rejections": 0, "market_regime_rejections": 0, "correlation_rejections": 0, "sector_rejections": 0, "position_cap_rejections": 0, "entry_ready": 0, "opened_trades": 0, "closed_trades": 0, "signal_exits": 0, "peak_open_positions": 0, "research_gate_rejections": 0, "quarantined_symbols": [], "tier_a_ready": 0, "tier_b_ready": 0, "tier_a_opened": 0, "tier_b_opened": 0, "score_counts": {"3/5": 0, "4/5": 0, "5/5": 0}, "direction_counts": {"LONG": 0, "SHORT": 0}}
+    diagnostics = {"assets_attempted": 0, "liquidity_rejections": 0, "ranked_candidates": 0, "entry_momentum_rejections": 0, "entry_volatility_rejections": 0, "entry_trend_rejections": 0, "entry_overextension_rejections": 0, "entry_reversal_rejections": 0, "pullback_rejections": 0, "bounce_rejections": 0, "ambiguous_direction_rejections": 0, "market_regime_rejections": 0, "correlation_rejections": 0, "sector_rejections": 0, "position_cap_rejections": 0, "entry_ready": 0, "opened_trades": 0, "closed_trades": 0, "signal_exits": 0, "peak_open_positions": 0, "research_gate_rejections": 0, "quarantined_symbols": [], "tier_a_ready": 0, "tier_b_ready": 0, "tier_a_opened": 0, "tier_b_opened": 0, "score_counts": {"3/5": 0, "4/5": 0, "5/5": 0}, "direction_counts": {"LONG": 0, "SHORT": 0}, "opened_direction_counts": {"LONG": 0, "SHORT": 0}}
     while clock() - started < duration_seconds:
         cycles += 1
         snapshots: list[AssetSnapshot] = []
@@ -168,7 +168,14 @@ def run_multi_asset_paper_session(*, feed, loop: PaperExecutionLoop, duration_se
                     diagnostics["entry_momentum_rejections"] += 1
             if not options:
                 continue
-            direction, tier, score, _ = max(options, key=lambda option: option[2])
+            best_score = max(option[2] for option in options)
+            best_options = [option for option in options if option[2] == best_score]
+            if len(best_options) > 1:
+                # Never resolve an equal-strength LONG/SHORT tie by iteration
+                # order. That would silently reintroduce a LONG bias.
+                diagnostics["ambiguous_direction_rejections"] += 1
+                continue
+            direction, tier, score, _ = best_options[0]
             diagnostics["entry_ready"] += 1
             diagnostics["score_counts"][f"{score}/5"] += 1
             diagnostics[f"tier_{tier.lower()}_ready"] += 1
@@ -200,6 +207,7 @@ def run_multi_asset_paper_session(*, feed, loop: PaperExecutionLoop, duration_se
             if result.get("action") == "OPEN":
                 diagnostics["opened_trades"] += 1
                 diagnostics[f"tier_{tier.lower()}_opened"] += 1
+                diagnostics["opened_direction_counts"][direction] += 1
         diagnostics["closed_trades"] = loop.stats.closed_trades
         diagnostics["peak_open_positions"] = max(diagnostics["peak_open_positions"], len(loop.account.positions))
         diagnostics["quarantined_symbols"] = sorted(quarantined)
