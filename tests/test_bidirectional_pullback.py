@@ -24,7 +24,8 @@ def test_touch_without_reclaim_is_rejected():
     ready, reason, _score, confirmations = entry_signal_details(prices, "LONG")
     assert not ready
     assert reason in {"bounce_not_confirmed", "momentum_not_confirmed", "trend_not_confirmed"}
-    assert confirmations.get("ema_reclaim", True) is False
+    bounce_checks = confirmations.get("bounce_checks", {})
+    assert bounce_checks.get("ema_reclaim") is False
     assert confirmations.get("bounce_score", 4) < 3
 
 
