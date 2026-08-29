@@ -14,7 +14,13 @@ def test_entry_details_exposes_five_factor_score():
     assert ready is True
     assert reason == "confirmed"
     assert score == 5
-    assert set(confirmations) == {"trend", "price_near_fast", "medium_momentum", "short_momentum", "positive_microstructure"}
+    five_factor_keys = {"trend", "price_near_fast", "medium_momentum", "short_momentum", "positive_microstructure"}
+    assert five_factor_keys <= set(confirmations)
+    assert confirmations["pullback_bounce"] is True
+    assert confirmations["bounce_score"] >= 3
+    assert set(confirmations["bounce_checks"]) == {
+        "pullback_touch", "ema_reclaim", "directional_followthrough", "pullback_structure"
+    }
 
 
 def test_tier_b_risk_override_is_half_standard():
