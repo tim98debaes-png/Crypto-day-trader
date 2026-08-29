@@ -5,11 +5,13 @@ from strategy_risk_controls import RiskConfig, exceeds_correlation_limit, pearso
 
 def test_risk_config_has_conservative_caps():
     cfg = RiskConfig()
-    assert cfg.max_open_positions == 8
-    assert cfg.soft_open_positions == 6
+    # These assertions intentionally track the tightened research-stage
+    # defaults introduced after the older 16.35% drawdown run.
+    assert cfg.max_open_positions == 4
+    assert cfg.soft_open_positions == 3
     assert cfg.max_positions_per_sector == 2
     assert cfg.max_pairwise_correlation == pytest.approx(0.75)
-    assert cfg.max_total_open_risk_pct == pytest.approx(12.0)
+    assert cfg.max_total_open_risk_pct == pytest.approx(4.0)
 
 
 def test_perfectly_correlated_series_are_blocked():
