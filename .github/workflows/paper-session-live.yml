@@ -93,9 +93,11 @@ jobs:
 
           with tempfile.TemporaryDirectory() as tmp:
               registry = CandidateRegistry(Path(tmp) / "registry.json")
+              # Portfolio-level approval is direction-neutral. The scanner is
+              # responsible for choosing LONG or SHORT per asset and cycle.
               candidate = {"Status": "ROBUST", "Stability": 75, "OOS PF": 1.5,
                            "OOS %": 12, "OOS trades": 20, "OOS DD": -8, "MC P05 %": -2,
-                           "Direction": "LONG", "RR": 2.0}
+                           "Direction": "BOTH", "RR": 2.0}
               candidate_id = registry.register(candidate)
               decision = registry.promote(candidate_id, human_approved=True)
               if not decision.approved:
