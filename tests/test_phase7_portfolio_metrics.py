@@ -40,10 +40,10 @@ def test_portfolio_exposes_detailed_trade_metrics():
     portfolio = PaperPortfolio(capital=1000, fee_pct=0, slippage_pct=0)
     account = portfolio.account("BTCUSDT")
 
-    account.open_position("BTCUSDT", "LONG", 100, 2, 2)
-    account.close_position(104, "TP")
-    account.open_position("BTCUSDT", "SHORT", 100, 2, 2)
-    account.close_position(102, "SL")
+    account.open_position("BTCUSDT", "LONG", 100, 2, 2, timestamp="2026-08-29T10:00:00+00:00")
+    account.close_position(104, "TP", timestamp="2026-08-29T10:01:00+00:00")
+    account.open_position("BTCUSDT", "SHORT", 100, 2, 2, timestamp="2026-08-29T10:07:00+00:00")
+    account.close_position(102, "SL", timestamp="2026-08-29T10:08:00+00:00")
     summary = portfolio.summary({"BTCUSDT": 102})
 
     assert summary["closed_trades"] == 2
