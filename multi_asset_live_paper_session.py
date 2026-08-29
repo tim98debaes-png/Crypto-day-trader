@@ -144,6 +144,12 @@ def run_multi_asset_paper_session(*, feed, loop: PaperExecutionLoop, duration_se
         diagnostics["ranked_candidates"] += len(ranked)
         btc = list(history.get("BTCUSDT", ()))
         btcema = _ema(btc, 20) if len(btc) >= 5 else None
+
+        # Build the complete set of currently valid entry candidates first.
+        # The previous implementation opened positions while iterating through
+        # scanner order. That made the four-slot cap capable of filling the
+        # portfolio with LONGs before equally strong SHORTs were considered.
+        entry_candidates: list[dict] = []
         for candidate in ranked:
             live = next(snapshot for snapshot in snapshots if snapshot.symbol == candidate.symbol)
             prices = list(history[candidate.symbol])
@@ -171,8 +177,6 @@ def run_multi_asset_paper_session(*, feed, loop: PaperExecutionLoop, duration_se
             best_score = max(option[2] for option in options)
             best_options = [option for option in options if option[2] == best_score]
             if len(best_options) > 1:
-                # Never resolve an equal-strength LONG/SHORT tie by iteration
-                # order. That would silently reintroduce a LONG bias.
                 diagnostics["ambiguous_direction_rejections"] += 1
                 continue
             direction, tier, score, _ = best_options[0]
@@ -190,30 +194,63 @@ def run_multi_asset_paper_session(*, feed, loop: PaperExecutionLoop, duration_se
                     continue
             if live.symbol in loop.account.positions:
                 continue
+            entry_candidates.append({"symbol": live.symbol, "price": live.price, "direction": direction, "tier": tier, "score": score, "candidate_score": candidate.score, "volatility_pct": live.volatility_pct})
+
+        # Select from the full valid set instead of opening in scanner order.
+        # Prefer one side at a time when both sides have opportunities, then
+        # continue by score. This removes the greedy LONG-first failure mode
+        # without imposing an artificial permanent LONG/SHORT quota.
+        open_symbols = tuple(loop.account.positions.keys())
+        available_slots = max(0, RISK_CONFIG.max_open_positions - len(open_symbols))
+        selected_cycle: list[dict] = []
+        remaining = sorted(entry_candidates, key=lambda x: (-x["score"], -x["candidate_score"], x["symbol"]))
+        while remaining and len(selected_cycle) < available_slots:
+            selected_directions = {item["direction"] for item in selected_cycle}
+            if len(selected_directions) < 2:
+                preferred = "SHORT" if "LONG" in selected_directions else ("LONG" if "SHORT" in selected_directions else None)
+                if preferred is not None:
+                    preferred_items = [item for item in remaining if item["direction"] == preferred]
+                    if preferred_items:
+                        chosen = preferred_items[0]
+                    else:
+                        chosen = remaining[0]
+                else:
+                    chosen = remaining[0]
+            else:
+                chosen = remaining[0]
+            selected_cycle.append(chosen)
+            remaining.remove(chosen)
+
+        # Apply portfolio risk checks to the chosen candidates, and if one is
+        # rejected continue through the remaining globally ranked candidates.
+        for chosen in selected_cycle + remaining:
             if len(loop.account.positions) >= RISK_CONFIG.max_open_positions:
-                diagnostics["position_cap_rejections"] += 1
+                break
+            symbol = chosen["symbol"]
+            if symbol in loop.account.positions:
                 continue
-            if sector_position_count(live.symbol, tuple(loop.account.positions.keys())) >= RISK_CONFIG.max_positions_per_sector:
+            current_symbols = tuple(loop.account.positions.keys())
+            if sector_position_count(symbol, current_symbols) >= RISK_CONFIG.max_positions_per_sector:
                 diagnostics["sector_rejections"] += 1
                 continue
-            if exceeds_correlation_limit(live.symbol, tuple(loop.account.positions.keys()), history, threshold=RISK_CONFIG.max_pairwise_correlation, window=RISK_CONFIG.correlation_window):
+            if exceeds_correlation_limit(symbol, current_symbols, history, threshold=RISK_CONFIG.max_pairwise_correlation, window=RISK_CONFIG.correlation_window):
                 diagnostics["correlation_rejections"] += 1
                 continue
-            if live.symbol not in selected:
-                selected.append(live.symbol)
-            atr = max(live.price * max(live.volatility_pct, 0.05) / 100.0 * 0.5, live.price * 0.001)
-            risk = None if tier == "A" else TIER_B_RISK_PCT
-            result = loop.on_market({"symbol": live.symbol, "price": live.price, "direction": direction, "stop_distance": max(live.price * 0.006, atr * 1.8, 1e-8), "atr_distance": atr, "timestamp": None, "strategy_score": score, "strategy_tier": tier, "risk_pct_override": risk})
+            if symbol not in selected:
+                selected.append(symbol)
+            atr = max(chosen["price"] * max(chosen["volatility_pct"], 0.05) / 100.0 * 0.5, chosen["price"] * 0.001)
+            risk = None if chosen["tier"] == "A" else TIER_B_RISK_PCT
+            result = loop.on_market({"symbol": symbol, "price": chosen["price"], "direction": chosen["direction"], "stop_distance": max(chosen["price"] * 0.006, atr * 1.8, 1e-8), "atr_distance": atr, "timestamp": None, "strategy_score": chosen["score"], "strategy_tier": chosen["tier"], "risk_pct_override": risk})
             if result.get("action") == "OPEN":
                 diagnostics["opened_trades"] += 1
-                diagnostics[f"tier_{tier.lower()}_opened"] += 1
-                diagnostics["opened_direction_counts"][direction] += 1
+                diagnostics[f"tier_{chosen['tier'].lower()}_opened"] += 1
+                diagnostics["opened_direction_counts"][chosen["direction"]] += 1
         diagnostics["closed_trades"] = loop.stats.closed_trades
         diagnostics["peak_open_positions"] = max(diagnostics["peak_open_positions"], len(loop.account.positions))
         diagnostics["quarantined_symbols"] = sorted(quarantined)
-        remaining = duration_seconds - (clock() - started)
-        if remaining <= 0:
+        remaining_time = duration_seconds - (clock() - started)
+        if remaining_time <= 0:
             break
-        sleep(min(interval_seconds, remaining))
+        sleep(min(interval_seconds, remaining_time))
     diagnostics.update(_audit_diagnostics(loop.account.audit_log))
     return MultiAssetPaperResult(duration_seconds // 60, len(symbols), cycles, successful, errors, tuple(selected), loop.summary(mark_price=None), diagnostics)
