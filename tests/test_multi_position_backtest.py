@@ -89,7 +89,7 @@ def test_gap_through_long_stop_executes_at_open():
     result=MultiPositionBacktester(risk_pct=0.5, slippage_pct=0).run(rows,lambda r: {'action':'LONG','stop_distance':2,'rr':2} if r['timestamp'].endswith('00:00:00+00:00') else {'action':'WAIT'})
     closes=[e for e in result.trades if e.get('event')=='CLOSE']
     assert closes[0]['reason']=='SL'
-    assert closes[0]['trigger_price']==95
+    assert closes[0]['price']==95
 
 
 def test_gap_through_short_target_executes_at_open():
@@ -101,7 +101,7 @@ def test_gap_through_short_target_executes_at_open():
     result=MultiPositionBacktester(risk_pct=0.5, slippage_pct=0).run(rows,lambda r: {'action':'SHORT','stop_distance':10,'rr':0.4} if r['timestamp'].endswith('00:00:00+00:00') else {'action':'WAIT'})
     closes=[e for e in result.trades if e.get('event')=='CLOSE']
     assert closes[0]['reason']=='TP'
-    assert closes[0]['trigger_price']==95
+    assert closes[0]['price']==95
 
 
 def test_candle_open_must_be_inside_high_low():
