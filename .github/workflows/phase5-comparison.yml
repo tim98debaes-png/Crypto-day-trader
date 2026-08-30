@@ -1,0 +1,16 @@
+name: Phase 5 historical comparison
+on:
+  pull_request:
+    branches: [main]
+jobs:
+  comparison:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r requirements.txt pytest
+      - run: pytest -q tests/test_phase5_comparison.py tests/test_phase5_filters.py
+      - name: Validate benchmark harness
+        run: python -m py_compile research/run_phase5_comparison.py
