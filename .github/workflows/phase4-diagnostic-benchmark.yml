@@ -51,7 +51,7 @@ jobs:
           --output phase4-results
       - name: Validate diagnostic artifacts
         run: >-
-          python -c "import json; from pathlib import Path; r=json.load(open('phase4-results/phase4_report.json')); assert r['status']=='DIAGNOSTIC_EXECUTION_COMPLETE'; assert set(r['strategies'])=={'A','B','C'}; [assertion for assertion in [Path(f'phase4-results/{s}/trades.json').exists() and Path(f'phase4-results/{s}/diagnosis.json').exists() and Path(f'phase4-results/{s}/equity_curve.json').exists() for s in 'ABC'] if not assertion] and (_ for _ in ()).throw(AssertionError('missing diagnostic artifact')); print('diagnostic artifacts ok')"
+          python -c "import json; from pathlib import Path; r=json.load(open('phase4-results/phase4_report.json')); assert r['status']=='DIAGNOSTIC_EXECUTION_COMPLETE'; assert set(r['strategies'])=={'A','B','C'}; missing=[f'phase4-results/{s}/{f}' for s in 'ABC' for f in ('trades.json','diagnosis.json','equity_curve.json') if not Path(f'phase4-results/{s}/{f}').exists()]; assert not missing, missing; print('diagnostic artifacts ok')"
       - name: Upload Phase 4 diagnostics
         uses: actions/upload-artifact@v4
         with:
