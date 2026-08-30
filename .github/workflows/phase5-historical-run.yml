@@ -1,0 +1,30 @@
+name: Phase 5 historical benchmark
+on:
+  workflow_dispatch:
+    inputs:
+      start:
+        description: 'Benchmark start (YYYY-MM-DD)'
+        required: true
+        default: '2026-05-01'
+      end:
+        description: 'Benchmark end (YYYY-MM-DD)'
+        required: true
+        default: '2026-08-01'
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r requirements.txt pytest
+      - name: Validate harness
+        run: pytest -q tests/test_phase5_comparison.py tests/test_phase5_filters.py
+      - name: Run historical comparison
+        run: python -m research.run_phase5_comparison --data data/historical --output artifacts/phase5
+      - name: Upload comparison
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase5-historical-comparison
+          path: artifacts/phase5/
