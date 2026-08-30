@@ -60,10 +60,14 @@ def load_rows(root: Path) -> dict[str, pd.DataFrame]:
 
 
 def build_symbol_features(raw: pd.DataFrame) -> pd.DataFrame:
-    """Build MTF features while preserving the canonical execution timestamp."""
-    f = build_mtf_features(raw[["timestamp", "open", "high", "low", "close", "volume"]])
-    f = f.copy()
-    f["timestamp"] = pd.to_datetime(f["time"], utc=True)
+    """Build MTF features while preserving the canonical research timestamp."""
+    f = build_mtf_features(raw[["timestamp", "open", "high", "low", "close", "volume"]]).copy()
+    if "timestamp" not in f.columns:
+        if "time" in f.columns:
+            f = f.rename(columns={"time": "timestamp"})
+        else:
+            raise RuntimeError("MTF feature builder returned neither timestamp nor time")
+    f["timestamp"] = pd.to_datetime(f["timestamp"], utc=True)
     return f
 
 
@@ -160,4 +164,5 @@ def main():
     print(json.dumps({"status": report["status"], "symbols": len(features), "candles": report["candles"], "results": results}, indent=2, default=str))
 
 
-if __name__ == "__main__": main()
+if __name__ == "__main__":
+    main()
