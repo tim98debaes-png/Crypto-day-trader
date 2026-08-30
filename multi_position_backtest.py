@@ -1,7 +1,7 @@
 """Multi-position historical backtester using PaperAccount portfolio semantics."""
 from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import Callable, Iterable, Optional
+from typing import Callable, Optional
 from paper_engine import PaperAccount
 
 SignalProvider = Callable[[dict], Optional[dict]]
@@ -30,13 +30,21 @@ class MultiPositionBacktestResult:
         return {'initial_capital':self.initial_capital,'final_equity':self.final_equity,'pnl':self.pnl,'return_pct':round(self.return_pct,10),'max_drawdown_pct':round(self.max_drawdown_pct,10),'closed_trades':len(closes),'wins':len(wins),'losses':len(losses),'win_rate_pct':round(len(wins)/len(closes)*100,10) if closes else 0.0,'profit_factor':gp/gl if gl else (float('inf') if gp else 0.0)}
 
 class MultiPositionBacktester:
+    """Backtest candle-close signals with next-candle-open execution.
+
+    Signal actions are decisions made from a completed candle.  Entries and
+    signal-driven closes therefore execute on the next candle's open.  This
+    prevents same-candle look-ahead while keeping intrabar SL/TP execution on
+    the OHLC range of the candle in which the position is already open.
+    """
     def __init__(self, capital=1000.0, risk_pct=0.5, fee_pct=0.1, slippage_pct=0.02, max_daily_loss_pct=3.0):
         self.config={'capital':float(capital),'risk_pct':float(risk_pct),'fee_pct':float(fee_pct),'slippage_pct':float(slippage_pct),'max_daily_loss_pct':float(max_daily_loss_pct)}
     @staticmethod
     def _ohlc(row):
-        close=float(row['close']); high=float(row.get('high',close)); low=float(row.get('low',close))
-        if high<=0 or low<=0 or low>high or not low<=close<=high: raise ValueError('invalid candle high/low: values must be positive and ordered')
-        return high,low,close
+        open_price=float(row['open']); close=float(row['close']); high=float(row.get('high',close)); low=float(row.get('low',close))
+        if open_price<=0 or high<=0 or low<=0 or low>high or not low<=open_price<=high or not low<=close<=high:
+            raise ValueError('invalid candle OHLC: values must be positive and open/close must be inside high/low')
+        return open_price, high, low, close
     @staticmethod
     def _exit_trigger(position, high, low):
         if position.direction=='LONG': stop_hit,target_hit=low<=position.stop_price, high>=position.target_price
@@ -44,26 +52,45 @@ class MultiPositionBacktester:
         if stop_hit: return 'SL',position.stop_price
         if target_hit: return 'TP',position.target_price
         return None
+    def _execute_pending(self, account, symbol, open_price, timestamp, pending):
+        """Execute the prior candle's signal at this candle's open."""
+        signal=pending.pop(symbol, None)
+        if not signal:
+            return
+        action=str(signal.get('action','WAIT')).upper()
+        if action in {'LONG','SHORT'} and symbol not in account.positions:
+            try:
+                account.open_position(symbol=symbol,direction=action,price=open_price,stop_distance=float(signal['stop_distance']),rr=float(signal.get('rr',2)),timestamp=timestamp,strategy_score=signal.get('strategy_score'),strategy_tier=signal.get('strategy_tier'))
+            except RuntimeError as exc:
+                if not str(exc).startswith('paper account is not allowed to open a position'):
+                    raise
+        elif action=='CLOSE' and symbol in account.positions:
+            account.close_position(open_price,'SIGNAL',timestamp,symbol=symbol,trigger_price=open_price)
+
     def run(self,candles,signal_provider):
         rows=[dict(c) for c in candles]; rows.sort(key=lambda r:str(r.get('timestamp') or r.get('time') or ''))
-        account=PaperAccount(**self.config,cash=self.config['capital']); equity_curve=[]
+        account=PaperAccount(**self.config,cash=self.config['capital']); equity_curve=[]; pending_signals={}
         for row in rows:
-            timestamp=str(row.get('timestamp') or row.get('time') or '') or None; symbol=str(row.get('symbol','BACKTEST')).upper(); high,low,close=self._ohlc(row)
-            account.last_prices[symbol]=close
+            timestamp=str(row.get('timestamp') or row.get('time') or '') or None; symbol=str(row.get('symbol','BACKTEST')).upper(); open_price,high,low,close=self._ohlc(row)
+            account.last_prices[symbol]=open_price
+
+            # A signal from the previous completed candle is executed here.
+            self._execute_pending(account,symbol,open_price,timestamp,pending_signals)
+
+            # SL/TP are intrabar exits for positions that are already open.
             position=account.positions.get(symbol)
             if position:
                 event=self._exit_trigger(position,high,low)
                 if event:
                     reason,trigger=event; account.close_position(trigger,reason,timestamp,symbol=symbol,trigger_price=trigger)
+
+            # This signal is based on the completed current candle and is not
+            # executable until the next candle for this symbol.
             signal=signal_provider(row) or {}; action=str(signal.get('action','WAIT')).upper()
-            if action in {'LONG','SHORT'} and symbol not in account.positions:
-                try:
-                    account.open_position(symbol=symbol,direction=action,price=close,stop_distance=float(signal['stop_distance']),rr=float(signal.get('rr',2)),timestamp=timestamp,strategy_score=signal.get('strategy_score'),strategy_tier=signal.get('strategy_tier'))
-                except RuntimeError as exc:
-                    if not str(exc).startswith('paper account is not allowed to open a position'):
-                        raise
-            elif action=='CLOSE' and symbol in account.positions:
-                account.close_position(close,'SIGNAL',timestamp,symbol=symbol,trigger_price=close)
+            if action in {'LONG','SHORT','CLOSE'}:
+                pending_signals[symbol]=dict(signal)
+
+            account.last_prices[symbol]=close
             equity_curve.append({'timestamp':timestamp or '','equity':round(account.equity(),8),'position_count':len(account.positions),'open_risk_pct':round(account.open_risk_pct(),8)})
         if rows:
             timestamp=str(rows[-1].get('timestamp') or rows[-1].get('time') or '') or None
