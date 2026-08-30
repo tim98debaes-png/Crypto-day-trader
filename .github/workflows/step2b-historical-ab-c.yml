@@ -1,0 +1,59 @@
+name: Step 2b Historical A-B-C Research
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Research branch or commit to validate
+        required: true
+        default: research/step2b-ab-c
+      start:
+        description: UTC start date/time
+        required: true
+        default: '2026-05-01T00:00:00Z'
+      end:
+        description: UTC end date/time
+        required: true
+        default: '2026-08-01T00:00:00Z'
+      max_assets:
+        description: Maximum scanner-universe assets
+        required: true
+        default: '10'
+
+jobs:
+  benchmark:
+    name: Step 2b A-B-C benchmark
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout isolated Step 2b ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: pip install -r requirements.txt pytest
+      - name: Download historical dataset
+        env:
+          START: ${{ inputs.start }}
+          END: ${{ inputs.end }}
+          MAX_ASSETS: ${{ inputs.max_assets }}
+        run: python research/run_step2b.py --start "$START" --end "$END" --interval 5m --max-assets "$MAX_ASSETS" --output data/historical
+      - name: Run isolated A-B-C benchmark
+        env:
+          START: ${{ inputs.start }}
+          END: ${{ inputs.end }}
+        run: python -m research.run_step2b_benchmark --data data/historical --start "$START" --end "$END" --output artifacts/step2b
+      - name: Validate benchmark artifact
+        run: |
+          python -m py_compile multi_position_backtest.py research/*.py
+          test -s artifacts/step2b/ab_c_report.json
+          test -s artifacts/step2b/ab_c_report.csv
+      - uses: actions/upload-artifact@v4
+        with:
+          name: step2b-ab-c-report
+          path: artifacts/step2b/
