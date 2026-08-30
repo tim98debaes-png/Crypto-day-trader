@@ -1,0 +1,43 @@
+name: Step 2b historical A-B-C research
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'feature/step2b/**'
+      - 'research/step2b/**'
+  pull_request:
+    paths:
+      - 'research/**'
+      - 'tests/test_step2b_*.py'
+      - '.github/workflows/step2b-historical-research.yml'
+
+env:
+  PYTHONPATH: ${{ github.workspace }}
+
+jobs:
+  step2b-benchmark:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: pip install -r requirements.txt pytest
+      - name: Run Step 2b A-B-C benchmark
+        run: python research/run_step2b_benchmark.py
+      - name: Upload benchmark report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: step2b-benchmark-report
+          path: |
+            research/**/step2b*.json
+            research/**/step2b*.csv
+          if-no-files-found: warn
