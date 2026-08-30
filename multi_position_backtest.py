@@ -95,7 +95,10 @@ class MultiPositionBacktester:
             if position:
                 event=self._exit_trigger(position,open_price,high,low)
                 if event:
-                    reason,trigger=event; account.close_position(trigger,reason,timestamp,symbol=symbol,trigger_price=trigger)
+                    reason,trigger=event
+                    account.close_position(trigger,reason,timestamp,symbol=symbol,trigger_price=trigger)
+                    if account.audit_log and account.audit_log[-1].get('event') == 'CLOSE':
+                        account.audit_log[-1]['trigger_price'] = trigger
             signal=signal_provider(row) or {}; action=str(signal.get('action','WAIT')).upper()
             if action in {'LONG','SHORT','CLOSE'}:
                 pending_signals[symbol]=dict(signal)
