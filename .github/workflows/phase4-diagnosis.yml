@@ -1,0 +1,14 @@
+name: Phase 4 trade-level diagnosis
+on:
+  pull_request:
+    branches: [main]
+jobs:
+  diagnosis:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r requirements.txt pytest
+      - run: pytest -q tests/test_phase4_diagnosis.py tests/test_phase4_diagnosis_integration.py tests/test_phase4_benchmark_export.py
