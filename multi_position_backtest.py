@@ -32,8 +32,8 @@ class MultiPositionBacktestResult:
 class MultiPositionBacktester:
     """Backtest candle-close signals with next-candle-open execution.
 
-    Signal actions are decisions made from a completed candle.  Entries and
-    signal-driven closes therefore execute on the next candle's open.  This
+    Signal actions are decisions made from a completed candle. Entries and
+    signal-driven closes therefore execute on the next candle's open. This
     prevents same-candle look-ahead while keeping intrabar SL/TP execution on
     the OHLC range of the candle in which the position is already open.
     """
@@ -46,9 +46,22 @@ class MultiPositionBacktester:
             raise ValueError('invalid candle OHLC: values must be positive and open/close must be inside high/low')
         return open_price, high, low, close
     @staticmethod
-    def _exit_trigger(position, high, low):
-        if position.direction=='LONG': stop_hit,target_hit=low<=position.stop_price, high>=position.target_price
-        else: stop_hit,target_hit=high>=position.stop_price, low<=position.target_price
+    def _exit_trigger(position, open_price, high, low):
+        """Return the first deterministic exit for a candle.
+
+        A gap through a stop/target executes at the candle open, because the
+        requested stop/target price was not available after the gap. If both
+        stop and target are touched inside one candle, the conservative stop
+        outcome is retained.
+        """
+        if position.direction=='LONG':
+            if open_price <= position.stop_price: return 'SL',open_price
+            if open_price >= position.target_price: return 'TP',open_price
+            stop_hit,target_hit=low<=position.stop_price, high>=position.target_price
+        else:
+            if open_price >= position.stop_price: return 'SL',open_price
+            if open_price <= position.target_price: return 'TP',open_price
+            stop_hit,target_hit=high>=position.stop_price, low<=position.target_price
         if stop_hit: return 'SL',position.stop_price
         if target_hit: return 'TP',position.target_price
         return None
@@ -80,7 +93,7 @@ class MultiPositionBacktester:
             # SL/TP are intrabar exits for positions that are already open.
             position=account.positions.get(symbol)
             if position:
-                event=self._exit_trigger(position,high,low)
+                event=self._exit_trigger(position,open_price,high,low)
                 if event:
                     reason,trigger=event; account.close_position(trigger,reason,timestamp,symbol=symbol,trigger_price=trigger)
 
