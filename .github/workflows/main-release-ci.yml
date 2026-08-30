@@ -22,6 +22,21 @@ jobs:
       - name: Existing full validation
         run: python -m pytest -q
 
+  step1-timing-validation:
+    name: Step 1 timing contract validation
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install -r requirements.txt pytest
+      - name: Run dedicated Step 1 timing tests
+        run: python -m pytest -q tests/test_step1_timing_contract.py
+
   step2b-benchmark:
     name: Step 2b A-B-C benchmark
     runs-on: ubuntu-latest
