@@ -1,0 +1,14 @@
+name: Phase 5 filter validation
+on:
+  pull_request:
+    branches: [main]
+jobs:
+  filters:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r requirements.txt pytest
+      - run: pytest -q tests/test_phase5_filters.py tests/test_phase5_benchmark.py
