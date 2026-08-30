@@ -1,0 +1,1 @@
+# Placeholder: Step 1 tests will be ported only after the isolated implementation is validated.
