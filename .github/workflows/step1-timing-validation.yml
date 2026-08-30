@@ -1,0 +1,29 @@
+name: Step 1 Timing Validation
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Research branch or commit to validate
+        required: true
+        default: research/step1-timing
+
+jobs:
+  timing:
+    name: Step 1 timing contract validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout research ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: pip install -r requirements.txt pytest
+      - name: Run Step 1 timing tests
+        run: pytest -q tests/test_step1_timing_contract.py
