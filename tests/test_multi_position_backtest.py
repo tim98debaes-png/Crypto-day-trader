@@ -83,7 +83,8 @@ def test_both_stop_and_target_is_conservative_stop():
 def test_gap_through_long_stop_executes_at_open():
     rows=[
         {'timestamp':'2026-01-01T00:00:00+00:00','symbol':'AAA','open':100,'high':100,'low':100,'close':100},
-        {'timestamp':'2026-01-01T00:01:00+00:00','symbol':'AAA','open':95,'high':96,'low':94,'close':95},
+        {'timestamp':'2026-01-01T00:01:00+00:00','symbol':'AAA','open':100,'high':101,'low':99,'close':100},
+        {'timestamp':'2026-01-01T00:02:00+00:00','symbol':'AAA','open':95,'high':96,'low':94,'close':95},
     ]
     result=MultiPositionBacktester(risk_pct=0.5, slippage_pct=0).run(rows,lambda r: {'action':'LONG','stop_distance':2,'rr':2} if r['timestamp'].endswith('00:00:00+00:00') else {'action':'WAIT'})
     closes=[e for e in result.trades if e.get('event')=='CLOSE']
@@ -94,7 +95,8 @@ def test_gap_through_long_stop_executes_at_open():
 def test_gap_through_short_target_executes_at_open():
     rows=[
         {'timestamp':'2026-01-01T00:00:00+00:00','symbol':'AAA','open':100,'high':100,'low':100,'close':100},
-        {'timestamp':'2026-01-01T00:01:00+00:00','symbol':'AAA','open':95,'high':96,'low':94,'close':95},
+        {'timestamp':'2026-01-01T00:01:00+00:00','symbol':'AAA','open':100,'high':101,'low':99,'close':100},
+        {'timestamp':'2026-01-01T00:02:00+00:00','symbol':'AAA','open':95,'high':96,'low':94,'close':95},
     ]
     result=MultiPositionBacktester(risk_pct=0.5, slippage_pct=0).run(rows,lambda r: {'action':'SHORT','stop_distance':10,'rr':0.4} if r['timestamp'].endswith('00:00:00+00:00') else {'action':'WAIT'})
     closes=[e for e in result.trades if e.get('event')=='CLOSE']
