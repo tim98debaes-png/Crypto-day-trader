@@ -9,7 +9,14 @@ def signals(data,params,mode="Conservatief"):
     long_score,short_score=make_signals(x,params); threshold=params["threshold"]-(5 if mode=="Agressief" else 0)
     long=(long_score>=threshold)&(long_score>short_score+params["min_edge"]); short=(short_score>=threshold)&(short_score>long_score+params["min_edge"])
     return long,short
-def candidate_grid(): return [dict(p) for p in STRATEGIES]
+def candidate_grid():
+    grid=[dict(p) for p in STRATEGIES]
+    # Isolated entry-quality experiment: the benchmark's canonical candidate
+    # uses threshold 80 instead of the previous threshold 60.
+    # The full optimizer grid remains unchanged.
+    if grid:
+        grid[0]["threshold"]=80
+    return grid
 def summary_grid():
     families={}
     for p in STRATEGIES: families[p["family"]]=families.get(p["family"],0)+1
