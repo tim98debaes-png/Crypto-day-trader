@@ -38,6 +38,7 @@ jobs:
           tests/test_phase3_historical_data.py
           tests/test_step2b_benchmark_schema.py
           tests/test_paper_parity_replay.py
+          && python -m py_compile research/paper_parity_trade_diagnostics.py
       - name: Download one-minute benchmark dataset
         run: >-
           python -m research.run_step2b
@@ -57,8 +58,18 @@ jobs:
       - name: Validate benchmark report
         run: >-
           python -c "import json; r=json.load(open('benchmark-results/paper_parity_report.json')); assert r['status']=='EXECUTION_COMPLETE'; assert set(r['results'])=={'PAPER','REGIME','REGIME_BTC'}; assert all(v['closed_trades']>=0 for v in r['results'].values()); print(json.dumps(r, indent=2))"
+      - name: Run paper-parity trade diagnostics
+        run: >-
+          python -m research.paper_parity_trade_diagnostics
+          --data data/historical
+          --output diagnostic-results
+      - name: Validate trade diagnostics
+        run: >-
+          python -c "import json; r=json.load(open('diagnostic-results/paper_parity_trade_diagnostics.json')); assert set(r['modes'])=={'PAPER','REGIME','REGIME_BTC'}; assert all(v['closed_trade_records']>0 for v in r['modes'].values()); print({m:{'trades':v['closed_trade_records'],'pf_including_partials':v['trade_pf_including_partials'],'partial_pnl':v['partial_pnl_total']} for m,v in r['modes'].items()})"
       - name: Upload paper-parity results
         uses: actions/upload-artifact@v4
         with:
           name: phase3-paper-parity-benchmark
-          path: benchmark-results/
+          path: |
+            benchmark-results/
+            diagnostic-results/
