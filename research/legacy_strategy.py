@@ -11,11 +11,12 @@ def signals(data,params,mode="Conservatief"):
     return long,short
 def candidate_grid():
     grid=[dict(p) for p in STRATEGIES]
-    # Isolated entry-quality experiment: the benchmark's canonical candidate
-    # uses threshold 80 instead of the previous threshold 60.
+    # Isolated entry-quality experiment: keep threshold 80 and require
+    # a larger score separation before accepting the canonical candidate.
     # The full optimizer grid remains unchanged.
     if grid:
         grid[0]["threshold"]=80
+        grid[0]["min_edge"]=12
     return grid
 def summary_grid():
     families={}
