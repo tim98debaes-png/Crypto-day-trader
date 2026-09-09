@@ -1,7 +1,7 @@
 import pandas as pd
-
-from research.paper_parity_replay import _btc_ok, _regime_ok, _stop_distance, _volatility
 from collections import deque
+
+from research.paper_parity_replay import _btc_ok, _paper_btc_ok, _regime_ok, _stop_distance, _volatility
 
 
 def _row(**values):
@@ -20,7 +20,7 @@ def test_high_volatility_blocks_both_regime_directions():
     assert _regime_ok(row, "SHORT") is False
 
 
-def test_btc_filter_blocks_only_opposite_trend_or_high_vol():
+def test_btc_1h_filter_blocks_only_opposite_trend_or_high_vol():
     up = _row(btc_ema20_1h=110, btc_ema50_1h=105, btc_ema200_1h=100, btc_adx1h=25, btc_vol_regime_1h=1.5)
     down = _row(btc_ema20_1h=90, btc_ema50_1h=95, btc_ema200_1h=100, btc_adx1h=25, btc_vol_regime_1h=1.5)
     rng = _row(btc_ema20_1h=101, btc_ema50_1h=100, btc_ema200_1h=99, btc_adx1h=10, btc_vol_regime_1h=1.5)
@@ -33,6 +33,16 @@ def test_btc_filter_blocks_only_opposite_trend_or_high_vol():
     assert _btc_ok(rng, "SHORT") is True
     assert _btc_ok(high, "LONG") is False
     assert _btc_ok(high, "SHORT") is False
+
+
+def test_paper_baseline_mirrors_live_btc_ema_direction_gate():
+    up = deque([100.0] * 19 + [101.0], maxlen=20)
+    down = deque([100.0] * 19 + [99.0], maxlen=20)
+    assert _paper_btc_ok("ETHUSDT", "LONG", up) is True
+    assert _paper_btc_ok("ETHUSDT", "SHORT", up) is False
+    assert _paper_btc_ok("ETHUSDT", "SHORT", down) is True
+    assert _paper_btc_ok("ETHUSDT", "LONG", down) is False
+    assert _paper_btc_ok("BTCUSDT", "LONG", down) is True
 
 
 def test_stop_distance_has_live_paper_floor():
