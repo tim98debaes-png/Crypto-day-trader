@@ -8,6 +8,9 @@ on:
       - "research/**"
       - "tests/test_phase3_historical_data.py"
       - ".github/workflows/phase3-historical-benchmark.yml"
+  push:
+    branches:
+      - phase-post-fee-sizing-benchmark-2026-09-09
 
 permissions:
   contents: read
