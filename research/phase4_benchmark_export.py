@@ -3,14 +3,16 @@ from __future__ import annotations
 import argparse,json
 from pathlib import Path
 from .run_step2b_benchmark import load_rows,build_symbol_features,precompute_signals,run_strategy
+from .mtf_features import add_btc_context
 from .legacy_strategy import candidate_grid
 from .phase4_export import export_result
 
 def main():
  p=argparse.ArgumentParser(); p.add_argument('--data',required=True); p.add_argument('--start',required=True); p.add_argument('--end',required=True); p.add_argument('--output',required=True); a=p.parse_args()
  root=Path(a.data); out=Path(a.output); raw=load_rows(root); params=candidate_grid()[0]; features={}; maps={}; rows=[]
+ btc=build_symbol_features(raw['BTCUSDT'])
  for symbol,frame in raw.items():
-  f=build_symbol_features(frame); f['symbol']=symbol; features[symbol]=f; maps[symbol]=precompute_signals(f,params); rows.extend(f.to_dict('records'))
+  f=build_symbol_features(frame); f['symbol']=symbol; f=add_btc_context(f,btc); features[symbol]=f; maps[symbol]=precompute_signals(f,params); rows.extend(f.to_dict('records'))
  rows.sort(key=lambda r:(str(r['timestamp']),str(r['symbol'])))
  report={'schema_version':1,'status':'DIAGNOSTIC_EXECUTION_COMPLETE','start':a.start,'end':a.end,'strategies':{}}
  for strategy in ('A','B','C'):
