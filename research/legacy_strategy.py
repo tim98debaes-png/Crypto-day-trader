@@ -11,11 +11,11 @@ def signals(data,params,mode="Conservatief"):
     return long,short
 def candidate_grid():
     grid=[dict(p) for p in STRATEGIES]
-    # Isolated entry-quality experiment: keep threshold 80 and require
-    # a larger score separation before accepting the canonical candidate.
+    # Isolated entry-quality experiment: require both volume and volatility
+    # confirmation for the canonical trend candidate via threshold 90.
     # The full optimizer grid remains unchanged.
     if grid:
-        grid[0]["threshold"]=80
+        grid[0]["threshold"]=90
         grid[0]["min_edge"]=12
     return grid
 def summary_grid():
