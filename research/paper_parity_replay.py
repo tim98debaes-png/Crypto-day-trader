@@ -113,9 +113,11 @@ def _btc_ok(row: pd.Series, direction: str) -> bool:
         return False
     if not np.isfinite([e20, e50, e200, adx, vol]).all() or vol > 3.0:
         return False
-    if direction == "LONG":
-        return not (adx >= 18.0 and e20 > e50 > e200)
-    return not (adx >= 18.0 and e20 < e50 < e200)
+    btc_up = adx >= 18.0 and e20 > e50 > e200
+    btc_down = adx >= 18.0 and e20 < e50 < e200
+    # Match the established BTC gate: LONG is blocked by BTC down/high-vol,
+    # SHORT by BTC up/high-vol; BTC range is allowed for either direction.
+    return not (btc_down if direction == "LONG" else btc_up)
 
 
 def _stats() -> dict:
@@ -224,7 +226,6 @@ def run_replay(frames: dict[str, pd.DataFrame], mode: str, config: ReplayConfig 
                 i += 1
             if i < len(frame) and frame.iloc[i]["timestamp"] == timestamp:
                 rows[symbol] = frame.iloc[i]; cursor[symbol] = i + 1
-        # Pending signals came from the preceding completed bar. Fill first.
         for symbol, signal in list(pending.items()):
             row = rows.get(symbol)
             if row is None or symbol in account.positions:
@@ -235,27 +236,19 @@ def run_replay(frames: dict[str, pd.DataFrame], mode: str, config: ReplayConfig 
             except RuntimeError:
                 pass
             del pending[symbol]
-        # A bar close is not known until the bar completes. Existing positions
-        # can still hit hard OHLC exits during this bar; signal exits are tested
-        # after the close is appended below.
         for symbol, row in rows.items():
             if symbol in account.positions:
                 account.last_prices[symbol] = float(row["open"])
-                # Hard exits and profit management first.
                 _manage_position(account, row, history[symbol], stats, diag)
-        # Current close becomes available only now.
         for symbol, row in rows.items():
             history[symbol].append(float(row["close"]))
             account.last_prices[symbol] = float(row["close"])
-        # Signal exits use the completed close. Re-check positions that survived
-        # hard exits, then construct next-bar entry candidates.
         for symbol, row in rows.items():
             position = account.positions.get(symbol)
-            if position is not None:
-                if exit_signal(list(history[symbol]), position.direction) or account.position_age_minutes(symbol, str(timestamp)) >= RISK_CONFIG.time_stop_minutes:
-                    reason = "TIME_STOP" if account.position_age_minutes(symbol, str(timestamp)) >= RISK_CONFIG.time_stop_minutes else "SIGNAL"
-                    _record(stats, account.close_position(float(row["close"]), reason, str(timestamp), symbol=symbol, trigger_price=float(row["close"])))
-                    diag["exits"][reason] += 1
+            if position is not None and (exit_signal(list(history[symbol]), position.direction) or account.position_age_minutes(symbol, str(timestamp)) >= RISK_CONFIG.time_stop_minutes):
+                reason = "TIME_STOP" if account.position_age_minutes(symbol, str(timestamp)) >= RISK_CONFIG.time_stop_minutes else "SIGNAL"
+                _record(stats, account.close_position(float(row["close"]), reason, str(timestamp), symbol=symbol, trigger_price=float(row["close"])))
+                diag["exits"][reason] += 1
         snapshots = []
         for symbol, row in rows.items():
             h = history[symbol]
