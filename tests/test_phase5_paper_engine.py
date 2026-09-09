@@ -7,13 +7,21 @@ from strategy_risk_controls import RiskConfig
 def test_long_position_sizes_from_risk_and_closes_with_fees_and_slippage():
     account = PaperAccount(capital=1000, risk_pct=1, fee_pct=0.1, slippage_pct=0.0)
     position = account.open_position("BTCUSDT", "LONG", price=100, stop_distance=2, rr=2, timestamp="2026-08-23T10:00:00+00:00")
-    assert position.quantity == pytest.approx(5.0)
+    assert position.quantity == pytest.approx(10 / 2.198)
     assert position.stop_price == pytest.approx(98.0)
     assert position.target_price == pytest.approx(104.0)
     pnl = account.close_position(104, reason="TP", timestamp="2026-08-23T10:10:00+00:00")
-    assert pnl == pytest.approx(18.98)
+    assert pnl == pytest.approx(17.27024568)
     assert account.position is None
-    assert account.cash == pytest.approx(1018.98)
+    assert account.cash == pytest.approx(1017.27024568)
+
+
+def test_fee_aware_stop_sizing_keeps_actual_stop_loss_near_configured_risk():
+    account = PaperAccount(capital=1000, risk_pct=1, fee_pct=0.1, slippage_pct=0.02)
+    position = account.open_position("BTCUSDT", "LONG", price=100, stop_distance=2, rr=2, timestamp="2026-08-23T10:00:00+00:00")
+    pnl = account.close_position(position.stop_price, reason="SL", timestamp="2026-08-23T10:05:00+00:00", trigger_price=position.stop_price)
+    assert pnl == pytest.approx(-10.0, rel=1e-9, abs=1e-8)
+    assert account.audit_log[-1]["risk_to_actual_ratio"] == pytest.approx(1.0, rel=1e-9, abs=1e-8)
 
 
 def test_short_position_has_correct_directional_pnl():

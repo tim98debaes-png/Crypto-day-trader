@@ -105,9 +105,20 @@ class PaperAccount:
         guard=evaluate_entry_guard(paper_mode=paper_mode,strategy_ready=strategy_ready,heartbeat_age_seconds=heartbeat_age_seconds,drawdown_pct=self.daily_loss_pct(price,symbol),max_drawdown_pct=20.0)
         if not guard.allowed: raise RuntimeError("paper account is not allowed to open a position: "+",".join(guard.reasons))
         if not self.can_open(price,symbol,timestamp,risk_pct_override=risk_pct_override): raise RuntimeError("paper account is not allowed to open a position")
-        base_risk=self.risk_pct if risk_pct_override is None else float(risk_pct_override); effective_risk_pct=min(base_risk,self.risk_config.max_risk_pct_per_trade)*self._risk_multiplier(timestamp); risk_amount=self.cash*effective_risk_pct/100.0; quantity=risk_amount/stop_distance
+        base_risk=self.risk_pct if risk_pct_override is None else float(risk_pct_override); effective_risk_pct=min(base_risk,self.risk_config.max_risk_pct_per_trade)*self._risk_multiplier(timestamp); risk_amount=self.cash*effective_risk_pct/100.0
         entry=price*(1.0+self.slippage_pct/100.0) if direction=="LONG" else price*(1.0-self.slippage_pct/100.0)
         stop=entry-stop_distance if direction=="LONG" else entry+stop_distance; target=entry+stop_distance*rr if direction=="LONG" else entry-stop_distance*rr
+        # Position size is based on the complete stop-loss cost: price loss + entry fee + exit fee + slippage.
+        if direction=="LONG":
+            stop_exit=stop*(1.0-self.slippage_pct/100.0)
+            gross_loss_per_unit=entry-stop_exit
+        else:
+            stop_exit=stop*(1.0+self.slippage_pct/100.0)
+            gross_loss_per_unit=stop_exit-entry
+        fee_per_unit=(entry+stop_exit)*self.fee_pct/100.0
+        loss_per_unit=gross_loss_per_unit+fee_per_unit
+        if loss_per_unit<=0: raise ValueError("computed stop loss cost must be positive")
+        quantity=risk_amount/loss_per_unit
         entry_fee=entry*quantity*self.fee_pct/100.0; self.cash-=entry_fee; self.last_prices[symbol]=float(price)
         position=PaperPosition(symbol,direction,entry,quantity,stop,target,timestamp,entry_fee,quantity,stop_distance,risk_amount,False,price,price,stop); self.positions[symbol]=position
         event={"event":"OPEN","symbol":symbol,"direction":direction,"price":entry,"quantity":quantity,"entry_fee":entry_fee,"risk_amount":risk_amount,"risk_pct":effective_risk_pct,"initial_stop_price":stop,"target_price":target,"timestamp":timestamp}
