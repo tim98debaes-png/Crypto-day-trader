@@ -41,4 +41,5 @@ def add_btc_context(asset_features, btc_features):
     right=right.sort_values("timestamp").drop_duplicates("timestamp")
     right["available"]=_utc_ns(right["timestamp"].dt.floor("1h") + pd.Timedelta(hours=1))
     right=right.rename(columns={c:f"btc_{c}" for c in ["ema20_1h","ema50_1h","ema200_1h","adx1h","vol_regime_1h"]})
+    right=right.drop(columns=["timestamp"])
     return pd.merge_asof(left.sort_values("timestamp"),right.sort_values("available"),left_on="timestamp",right_on="available",direction="backward")
