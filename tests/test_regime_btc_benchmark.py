@@ -43,9 +43,9 @@ def test_btc_masks_block_high_vol():
 
 
 def test_btc_context_uses_next_hour_as_availability_boundary():
-    asset = pd.DataFrame({"timestamp": pd.to_datetime(["2026-01-01 00:30", "2026-01-01 01:30"], utc=True)})
+    asset = pd.DataFrame({"timestamp": pd.to_datetime(["2026-01-01 00:30", "2026-01-01 01:30"], utc=True).astype("datetime64[ms, UTC]")})
     btc = pd.DataFrame({
-        "timestamp": pd.to_datetime(["2026-01-01 00:00", "2026-01-01 01:00"], utc=True),
+        "timestamp": pd.to_datetime(["2026-01-01 00:00", "2026-01-01 01:00"], utc=True).astype("datetime64[us, UTC]"),
         "ema20_1h": [10., 20.], "ema50_1h": [9., 19.],
         "ema200_1h": [8., 18.], "adx1h": [20., 21.],
         "vol_regime_1h": [1., 1.],
@@ -53,3 +53,4 @@ def test_btc_context_uses_next_hour_as_availability_boundary():
     out = add_btc_context(asset, btc)
     assert np.isnan(out.loc[0, "btc_ema20_1h"])
     assert out.loc[1, "btc_ema20_1h"] == 10.
+    assert str(out["timestamp"].dtype) == "datetime64[ns, UTC]"
