@@ -5,14 +5,7 @@ from research.strategy_v2_replay import _completed, _resample
 
 def _frame(periods=12):
     ts = pd.date_range("2026-01-01", periods=periods, freq="min", tz="UTC")
-    return pd.DataFrame({
-        "timestamp": ts,
-        "open": range(100, 100 + periods),
-        "high": range(101, 101 + periods),
-        "low": range(99, 99 + periods),
-        "close": range(100, 100 + periods),
-        "volume": [10.0] * periods,
-    })
+    return pd.DataFrame({"timestamp": ts, "open": range(100, 100 + periods), "high": range(101, 101 + periods), "low": range(99, 99 + periods), "close": range(100, 100 + periods), "volume": [10.0] * periods})
 
 
 def test_resample_uses_ohlcv_aggregation():
