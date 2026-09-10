@@ -84,7 +84,6 @@ def _relative_volume(candles: Sequence[Mapping[str, object]], lookback: int = 20
 
 
 def _structure(candles: Sequence[Mapping[str, object]], direction: str) -> tuple[bool, bool]:
-    """Require directional swing progression plus a meaningful net structure move."""
     if len(candles) < 5:
         return False, False
     highs = [_field(candle, "high") for candle in candles[-5:]]
@@ -94,16 +93,11 @@ def _structure(candles: Sequence[Mapping[str, object]], direction: str) -> tuple
     h = [float(value) for value in highs if value is not None]
     l = [float(value) for value in lows if value is not None]
     if direction == "LONG":
-        progression = h[-1] > h[-2] and l[-1] > l[-2]
-        continuation = h[-1] > h[0] and l[-1] > l[0]
-    else:
-        progression = h[-1] < h[-2] and l[-1] < l[-2]
-        continuation = h[-1] < h[0] and l[-1] < l[0]
-    return progression, continuation
+        return h[-1] > h[-2] and l[-1] > l[-2], h[-1] > h[0] and l[-1] > l[0]
+    return h[-1] < h[-2] and l[-1] < l[-2], h[-1] < h[0] and l[-1] < l[0]
 
 
 def _pullback_trigger(candles: Sequence[Mapping[str, object]], direction: str, atr: float, ema_fast: float) -> tuple[bool, float]:
-    """Require a pullback followed by an actual close/reclaim and impulse."""
     if len(candles) < 5 or atr <= 0:
         return False, 0.0
     current, previous = candles[-1], candles[-2]
@@ -135,7 +129,6 @@ def _pullback_trigger(candles: Sequence[Mapping[str, object]], direction: str, a
 
 
 def generate_signal(candles_5m: Sequence[Mapping[str, object]], candles_15m: Sequence[Mapping[str, object]], candles_1h: Sequence[Mapping[str, object]], btc_1h: Sequence[Mapping[str, object]] | None = None) -> StrategyV2Signal | None:
-    """Return one signal from completed candles only, otherwise ``None``."""
     if min(len(candles_5m), len(candles_15m), len(candles_1h)) < 50:
         return None
     c5, c15, c1 = _closes(candles_5m), _closes(candles_15m), _closes(candles_1h)
@@ -146,8 +139,7 @@ def generate_signal(candles_5m: Sequence[Mapping[str, object]], candles_15m: Seq
     e5_fast, atr5, rv5 = _ema(c5, 20), _atr(candles_5m), _relative_volume(candles_5m)
     if None in (e1_fast, e1_slow, e15_fast, e15_slow, e5_fast, atr5, rv5):
         return None
-    assert e1_fast is not None and e1_slow is not None and e15_fast is not None and e15_slow is not None
-    assert e5_fast is not None and atr5 is not None and rv5 is not None
+    assert e1_fast is not None and e1_slow is not None and e15_fast is not None and e15_slow is not None and e5_fast is not None and atr5 is not None and rv5 is not None
     if atr5 <= 0 or rv5 <= 0:
         return None
     slope15, slope1 = _slope(c15, 4), _slope(c1, 4)
