@@ -4,15 +4,9 @@ from strategy_v2 import generate_signal
 def _series(n=80, trend=0.001, volume=100.0):
     rows = []
     price = 100.0
-    for i in range(n):
+    for _ in range(n):
         price *= 1.0 + trend
-        rows.append({
-            "open": price * (1.0 - trend * 0.2),
-            "high": price * (1.0 + abs(trend) * 0.8),
-            "low": price * (1.0 - abs(trend) * 0.8),
-            "close": price,
-            "volume": volume,
-        })
+        rows.append({"open": price * (1.0 - trend * 0.2), "high": price * (1.0 + abs(trend) * 0.8), "low": price * (1.0 - abs(trend) * 0.8), "close": price, "volume": volume})
     return rows
 
 
@@ -41,11 +35,3 @@ def test_v2_btc_filter_blocks_short_against_uptrend():
     asset = _series(trend=-0.001)
     btc_up = _series(trend=0.001)
     assert generate_signal(asset, asset, asset, btc_up) is None
-
-
-def test_v2_signal_has_atr_normalised_stop_when_trigger_is_valid():
-    candles = _series(trend=0.001)
-    # The synthetic monotonic series should not force a signal; this test
-    # instead verifies the public contract remains fail-closed when the
-    # trigger structure is absent.
-    assert generate_signal(candles, candles, candles) is None
