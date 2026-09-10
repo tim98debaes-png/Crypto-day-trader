@@ -94,7 +94,7 @@ def _structure(candles: Sequence[Mapping[str, object]], direction: str) -> tuple
     l = [float(value) for value in lows if value is not None]
     if direction == "LONG":
         return h[-1] > h[-2] and l[-1] > l[-2], h[-1] > h[0] and l[-1] > l[0]
-    return h[-1] < h[-2] and l[-1] < l[-2], h[-1] < h[0] and l[-1] < l[0]
+    return h[-1] < h[-2] and l[-1] < l[-2], h[-1] < h[-0] and l[-1] < l[-0]
 
 
 def _pullback_trigger(candles: Sequence[Mapping[str, object]], direction: str, atr: float, ema_fast: float) -> tuple[bool, float]:
