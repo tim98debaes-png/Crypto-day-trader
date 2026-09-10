@@ -12,6 +12,17 @@ on:
       - "multi_asset_scanner.py"
       - "tests/test_phase3_historical_data.py"
       - ".github/workflows/phase3-historical-benchmark.yml"
+  push:
+    branches:
+      - phase-short-near-fast-entry-2026-09-10
+    paths:
+      - "research/**"
+      - "entry_exit_logic.py"
+      - "paper_engine.py"
+      - "strategy_risk_controls.py"
+      - "multi_asset_scanner.py"
+      - "tests/test_phase3_historical_data.py"
+      - ".github/workflows/phase3-historical-benchmark.yml"
 
 permissions:
   contents: read
