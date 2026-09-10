@@ -84,21 +84,27 @@ def _relative_volume(candles: Sequence[Mapping[str, object]], lookback: int = 20
 
 
 def _structure(candles: Sequence[Mapping[str, object]], direction: str) -> tuple[bool, bool]:
-    if len(candles) < 4:
+    """Require directional swing progression plus a meaningful net structure move."""
+    if len(candles) < 5:
         return False, False
-    highs = [_field(candle, "high") for candle in candles[-4:]]
-    lows = [_field(candle, "low") for candle in candles[-4:]]
+    highs = [_field(candle, "high") for candle in candles[-5:]]
+    lows = [_field(candle, "low") for candle in candles[-5:]]
     if any(value is None for value in highs + lows):
         return False, False
-    high_values = [value for value in highs if value is not None]
-    low_values = [value for value in lows if value is not None]
+    h = [float(value) for value in highs if value is not None]
+    l = [float(value) for value in lows if value is not None]
     if direction == "LONG":
-        return high_values[-1] >= high_values[-2] and low_values[-1] >= low_values[-2], low_values[-1] > low_values[0]
-    return high_values[-1] <= high_values[-2] and low_values[-1] <= low_values[-2], high_values[-1] < high_values[0]
+        progression = h[-1] > h[-2] and l[-1] > l[-2]
+        continuation = h[-1] > h[0] and l[-1] > l[0]
+    else:
+        progression = h[-1] < h[-2] and l[-1] < l[-2]
+        continuation = h[-1] < h[0] and l[-1] < l[0]
+    return progression, continuation
 
 
 def _pullback_trigger(candles: Sequence[Mapping[str, object]], direction: str, atr: float, ema_fast: float) -> tuple[bool, float]:
-    if len(candles) < 4 or atr <= 0:
+    """Require a pullback followed by an actual close/reclaim and impulse."""
+    if len(candles) < 5 or atr <= 0:
         return False, 0.0
     current, previous = candles[-1], candles[-2]
     close = _field(current, "close")
@@ -108,8 +114,8 @@ def _pullback_trigger(candles: Sequence[Mapping[str, object]], direction: str, a
     previous_close = _field(previous, "close")
     previous_low = _field(previous, "low")
     previous_high = _field(previous, "high")
-    lows = [_field(candle, "low") for candle in candles[-4:-1]]
-    highs = [_field(candle, "high") for candle in candles[-4:-1]]
+    lows = [_field(candle, "low") for candle in candles[-5:-1]]
+    highs = [_field(candle, "high") for candle in candles[-5:-1]]
     if None in (close, high, low, open_, previous_close, previous_low, previous_high) or any(value is None for value in lows + highs):
         return False, 0.0
     assert close is not None and high is not None and low is not None and open_ is not None
@@ -117,20 +123,20 @@ def _pullback_trigger(candles: Sequence[Mapping[str, object]], direction: str, a
     body = abs(close - open_)
     if direction == "LONG":
         pullback = min(value for value in lows if value is not None)
-        reclaimed = close > ema_fast and previous_close <= ema_fast * 1.001
-        impulse = close > previous_high and body / atr >= 0.25
+        reclaimed = close > ema_fast and previous_close <= ema_fast
+        impulse = close > previous_high and body / atr >= 0.30 and close > open_
         depth = max(0.0, (ema_fast - pullback) / atr)
     else:
         pullback = max(value for value in highs if value is not None)
-        reclaimed = close < ema_fast and previous_close >= ema_fast * 0.999
-        impulse = close < previous_low and body / atr >= 0.25
+        reclaimed = close < ema_fast and previous_close >= ema_fast
+        impulse = close < previous_low and body / atr >= 0.30 and close < open_
         depth = max(0.0, (pullback - ema_fast) / atr)
-    return reclaimed and impulse and depth <= 1.5, depth
+    return reclaimed and impulse and 0.15 <= depth <= 1.5, depth
 
 
 def generate_signal(candles_5m: Sequence[Mapping[str, object]], candles_15m: Sequence[Mapping[str, object]], candles_1h: Sequence[Mapping[str, object]], btc_1h: Sequence[Mapping[str, object]] | None = None) -> StrategyV2Signal | None:
     """Return one signal from completed candles only, otherwise ``None``."""
-    if min(len(candles_5m), len(candles_15m), len(candles_1h)) < 30:
+    if min(len(candles_5m), len(candles_15m), len(candles_1h)) < 50:
         return None
     c5, c15, c1 = _closes(candles_5m), _closes(candles_15m), _closes(candles_1h)
     if not c5 or not c15 or not c1:
