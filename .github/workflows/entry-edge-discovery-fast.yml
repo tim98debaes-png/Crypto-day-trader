@@ -1,0 +1,70 @@
+name: Fast entry edge discovery
+
+on:
+  push:
+    branches:
+      - phase-fast-entry-edge-discovery-2026-09-10
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "research/entry_edge_discovery.py"
+      - "research/mtf_features.py"
+      - "entry_exit_logic.py"
+      - ".github/workflows/entry-edge-discovery-fast.yml"
+
+permissions:
+  contents: read
+
+env:
+  PYTHONPATH: ${{ github.workspace }}
+
+jobs:
+  discovery:
+    name: Fast historical entry edge discovery
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt pytest
+      - name: Compile and regression test
+        run: python -m py_compile research/entry_edge_discovery.py && python -m pytest -q tests/test_paper_parity_replay.py
+      - name: Restore cached one-minute dataset
+        id: data-cache
+        uses: actions/cache@v4
+        with:
+          path: data/historical
+          key: historical-1m-2026-05-01-2026-08-01-v1
+      - name: Download dataset on cache miss
+        if: steps.data-cache.outputs.cache-hit != 'true'
+        run: >-
+          python -m research.run_step2b
+          --start 2026-05-01T00:00:00Z
+          --end 2026-08-01T00:00:00Z
+          --interval 1m
+          --max-assets 10
+          --output data/historical
+      - name: Validate dataset
+        run: >-
+          python -c "import json; m=json.load(open('data/historical/manifest.json')); assert m['status']=='DATASET_READY'; assert m['interval']=='1m'; assert len(m['symbols'])==10; print(m['symbols'])"
+      - name: Run fast discovery
+        run: >-
+          python -m research.entry_edge_discovery
+          --data data/historical
+          --output edge-results
+          --stride 5
+      - name: Validate report
+        run: >-
+          python -c "import json; r=json.load(open('edge-results/entry_edge_discovery.json')); assert r['status']=='EXECUTION_COMPLETE'; assert r['entry_opportunities']>1000; assert r['stride']==5; assert r['best_buckets']; print(json.dumps(r['best_buckets'][:15], indent=2))"
+      - name: Upload discovery result
+        uses: actions/upload-artifact@v4
+        with:
+          name: entry-edge-discovery-fast
+          path: edge-results/
