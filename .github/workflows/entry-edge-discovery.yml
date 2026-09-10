@@ -1,6 +1,14 @@
 name: Entry edge discovery
 
 on:
+  push:
+    branches:
+      - phase-entry-edge-discovery-2026-09-10
+    paths:
+      - "research/entry_edge_discovery.py"
+      - "research/mtf_features.py"
+      - "entry_exit_logic.py"
+      - ".github/workflows/entry-edge-discovery.yml"
   pull_request:
     branches:
       - main
