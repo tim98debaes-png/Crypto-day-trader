@@ -57,6 +57,7 @@ def _signal_candidates(symbol, timestamp, bars, account, history, btc_bars, diag
 
 
 def run_v2(frames: dict[str, pd.DataFrame], config: ReplayConfig = ReplayConfig()) -> tuple[dict, dict]:
+    """Replay V2 with the same fee/slippage/account controls used by paper trading."""
     bars = {symbol: {"5m": _resample(frame, "5min"), "15m": _resample(frame, "15min"), "1h": _resample(frame, "1h")} for symbol, frame in frames.items()}
     btc_bars = bars["BTCUSDT"]
     account = PaperAccount(capital=config.capital, cash=config.capital, risk_pct=config.risk_pct, fee_pct=config.fee_pct, slippage_pct=config.slippage_pct, max_daily_loss_pct=config.max_daily_loss_pct)
