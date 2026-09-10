@@ -50,7 +50,8 @@ def _slope(values:Sequence[float],lookback:int)->float|None:
 
 def _relative_volume(candles:Sequence[Mapping[str,object]],lookback:int=20)->float|None:
     if len(candles)<lookback+1:return None
-    cur=_field(candles[-1],"volume");hist=[_field(c,"volume") for c in candles[-lookback-1:-1]
+    cur=_field(candles[-1],"volume")
+    hist=[_field(c,"volume") for c in candles[-lookback-1:-1]]
     if cur is None or cur<0 or any(v is None or v<0 for v in hist):return None
     avg=sum(v for v in hist if v is not None)/len(hist)
     return cur/avg if avg>0 else None
