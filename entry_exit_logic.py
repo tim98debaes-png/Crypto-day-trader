@@ -106,7 +106,7 @@ def exit_signal(prices: list[float], direction: str = "LONG"):
     negative = sum(move < 0 for move in recent)
     positive = sum(move > 0 for move in recent)
     if direction == "LONG":
-        return prices[-1] < fast * 0.9985 and fast < slow and negative == 3
+        return prices[-1] < fast * 0.9980 and fast < slow and negative == 3
     if direction == "SHORT":
-        return prices[-1] > fast * 1.0015 and fast > slow and positive == 3
+        return prices[-1] > fast * 1.0020 and fast > slow and positive == 3
     return False
