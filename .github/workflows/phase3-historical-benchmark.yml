@@ -1,4 +1,4 @@
-name: Phase 3 historical A-B-C benchmark
+name: Phase 3 historical paper-parity benchmark
 
 on:
   pull_request:
@@ -6,6 +6,10 @@ on:
       - main
     paths:
       - "research/**"
+      - "entry_exit_logic.py"
+      - "paper_engine.py"
+      - "strategy_risk_controls.py"
+      - "multi_asset_scanner.py"
       - "tests/test_phase3_historical_data.py"
       - ".github/workflows/phase3-historical-benchmark.yml"
 
@@ -16,9 +20,10 @@ env:
   PYTHONPATH: ${{ github.workspace }}
 
 jobs:
-  phase3-benchmark:
+  phase3-paper-parity:
+    name: Paper-parity benchmark
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -28,31 +33,77 @@ jobs:
           python-version: "3.11"
       - name: Install dependencies
         run: pip install -r requirements.txt pytest
-      - name: Test historical data client
-        run: python -m pytest -q tests/test_phase3_historical_data.py tests/test_step2b_benchmark_schema.py
-      - name: Download benchmark dataset
+      - name: Test historical data and paper-parity replay
+        run: >-
+          python -m pytest -q
+          tests/test_phase3_historical_data.py
+          tests/test_step2b_benchmark_schema.py
+          tests/test_paper_parity_replay.py
+          && python -m py_compile research/paper_parity_trade_diagnostics.py
+      - name: Download one-minute benchmark dataset
         run: >-
           python -m research.run_step2b
           --start 2026-05-01T00:00:00Z
           --end 2026-08-01T00:00:00Z
-          --interval 5m
+          --interval 1m
           --max-assets 10
           --output data/historical
       - name: Validate dataset manifest
         run: >-
-          python -c "import json; m=json.load(open('data/historical/manifest.json')); assert m['status']=='DATASET_READY'; assert len(m['symbols'])==10; assert all(x['candles']>250 for x in m['files']); print(json.dumps(m, indent=2))"
-      - name: Run A-B-C benchmark
+          python -c "import json; m=json.load(open('data/historical/manifest.json')); assert m['status']=='DATASET_READY'; assert m['interval']=='1m'; assert len(m['symbols'])==10; assert all(x['candles']>10000 for x in m['files']); print(json.dumps(m, indent=2))"
+      - name: Run paper-parity benchmark
         run: >-
-          python -m research.run_step2b_benchmark
+          python -m research.paper_parity_replay
           --data data/historical
-          --start 2026-05-01T00:00:00Z
-          --end 2026-08-01T00:00:00Z
           --output benchmark-results
       - name: Validate benchmark report
         run: >-
-          python -c "import json; r=json.load(open('benchmark-results/ab_c_report.json')); assert r['status']=='EXECUTION_COMPLETE'; assert set(r['results'])=={'A','B','C'}; print(json.dumps(r, indent=2))"
-      - name: Upload benchmark results
+          python -c "import json; r=json.load(open('benchmark-results/paper_parity_report.json')); assert r['status']=='EXECUTION_COMPLETE'; assert set(r['results'])=={'PAPER','REGIME','REGIME_BTC'}; assert all(v['closed_trades']>=0 for v in r['results'].values()); print(json.dumps(r, indent=2))"
+      - name: Upload paper-parity benchmark
         uses: actions/upload-artifact@v4
         with:
-          name: phase3-ab-c-benchmark
+          name: phase3-paper-parity-benchmark
           path: benchmark-results/
+
+  phase3-paper-parity-diagnostics:
+    name: Paper-parity trade diagnostics
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install -r requirements.txt pytest
+      - name: Test diagnostic module
+        run: >-
+          python -m pytest -q
+          tests/test_paper_parity_replay.py
+          && python -m py_compile research/paper_parity_trade_diagnostics.py
+      - name: Download one-minute diagnostic dataset
+        run: >-
+          python -m research.run_step2b
+          --start 2026-05-01T00:00:00Z
+          --end 2026-08-01T00:00:00Z
+          --interval 1m
+          --max-assets 10
+          --output data/historical
+      - name: Validate diagnostic dataset manifest
+        run: >-
+          python -c "import json; m=json.load(open('data/historical/manifest.json')); assert m['status']=='DATASET_READY'; assert m['interval']=='1m'; assert len(m['symbols'])==10; assert all(x['candles']>10000 for x in m['files']); print(json.dumps(m, indent=2))"
+      - name: Run paper-parity trade diagnostics
+        run: >-
+          python -m research.paper_parity_trade_diagnostics
+          --data data/historical
+          --output diagnostic-results
+      - name: Validate trade diagnostics
+        run: >-
+          python -c "import json; r=json.load(open('diagnostic-results/paper_parity_trade_diagnostics.json')); assert set(r['modes'])=={'PAPER','REGIME','REGIME_BTC'}; assert all(v['closed_trade_records']>0 for v in r['modes'].values()); print({m:{'trades':v['closed_trade_records'],'pf_including_partials':v['trade_pf_including_partials'],'partial_pnl':v['partial_pnl_total']} for m,v in r['modes'].items()})"
+      - name: Upload paper-parity diagnostics
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase3-paper-parity-diagnostics
+          path: diagnostic-results/
