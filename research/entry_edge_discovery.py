@@ -51,7 +51,17 @@ def _features(raw):
         f = build_mtf_features(frame[["timestamp","open","high","low","close","volume"]])
         f = add_btc_context(f, btc)
         f["symbol"] = symbol
-        f["quote_volume_24h"] = frame.set_index("timestamp")["close"].mul(frame.set_index("timestamp")["volume"]).rolling(1440, min_periods=1).sum().to_numpy()
+        # build_mtf_features intentionally drops/warm-starts rows, so the
+        # raw rolling series must be aligned by timestamp rather than assigned
+        # positionally. The previous to_numpy() assignment caused a length
+        # mismatch whenever the feature frame had fewer rows than raw data.
+        quote_volume = (
+            frame.set_index("timestamp")["close"]
+            .mul(frame.set_index("timestamp")["volume"])
+            .rolling(1440, min_periods=1)
+            .sum()
+        )
+        f["quote_volume_24h"] = f["timestamp"].map(quote_volume)
         result[symbol] = f.reset_index(drop=True)
     return result
 
