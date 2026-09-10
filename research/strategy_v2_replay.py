@@ -1,9 +1,4 @@
-"""Event-driven 1m replay for the independent Strategy V2 signal engine.
-
-Signals are generated only from completed 5m/15m/1h candles and filled on the
-next 1m bar open. Existing PaperAccount execution/risk controls are reused;
-legacy entry/exit logic is not imported by this module.
-"""
+"""Event-driven 1m replay for the independent Strategy V2 signal engine."""
 from __future__ import annotations
 
 import argparse
@@ -57,7 +52,7 @@ def _signal_candidates(symbol, timestamp, bars, account, history, btc_bars, diag
 
 
 def run_v2(frames: dict[str, pd.DataFrame], config: ReplayConfig = ReplayConfig()) -> tuple[dict, dict]:
-    """Replay V2 with the same fee/slippage/account controls used by paper trading."""
+    """Replay V2 with the established fee/slippage/account controls."""
     bars = {symbol: {"5m": _resample(frame, "5min"), "15m": _resample(frame, "15min"), "1h": _resample(frame, "1h")} for symbol, frame in frames.items()}
     btc_bars = bars["BTCUSDT"]
     account = PaperAccount(capital=config.capital, cash=config.capital, risk_pct=config.risk_pct, fee_pct=config.fee_pct, slippage_pct=config.slippage_pct, max_daily_loss_pct=config.max_daily_loss_pct)
