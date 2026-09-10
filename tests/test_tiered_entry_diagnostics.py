@@ -23,6 +23,29 @@ def test_entry_details_exposes_five_factor_score():
     }
 
 
+def test_short_entry_uses_tighter_near_fast_filter():
+    prices = [
+        100.0, 99.80694778, 99.55280911, 99.41432976, 99.29244445, 99.00434808,
+        98.76374365, 98.57972992, 98.36459413, 98.16960761, 97.88547335, 97.64904024,
+    ]
+    ready, reason, score, confirmations = entry_signal_details(prices, "SHORT")
+    assert confirmations["bounce_score"] == 4
+    assert confirmations["short_momentum"] is True
+    assert confirmations["price_near_fast"] is False
+    assert ready is False
+    assert reason == "momentum_not_confirmed"
+    assert score == 4
+
+
+def test_long_near_fast_threshold_is_unchanged():
+    prices = [100.0, 100.12, 100.24, 100.36, 100.31, 100.43, 100.55, 100.50, 100.62, 100.74, 100.70, 100.85]
+    ready, reason, score, confirmations = entry_signal_details(prices, "LONG")
+    assert ready is True
+    assert reason == "confirmed"
+    assert score == 5
+    assert confirmations["price_near_fast"] is True
+
+
 def test_tier_b_risk_override_is_half_standard():
     account = PaperAccount(capital=1000.0, fee_pct=0.0, slippage_pct=0.0)
     position = account.open_position("BTCUSDT", "LONG", 100.0, 1.0, 2.0, risk_pct_override=0.25, strategy_score=3, strategy_tier="B")
