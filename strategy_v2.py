@@ -1,17 +1,4 @@
-"""Independent Strategy V2: multi-timeframe trend pullback continuation.
-
-This module is deliberately independent from the legacy entry_exit_logic module.
-It produces a signal from completed OHLCV candles only. Execution, sizing,
-fees, slippage, portfolio limits and exits remain outside this module.
-
-Design principles:
-- trade continuation after a measurable pullback, not raw indicator crosses;
-- require structure agreement on 1h, 15m and 5m;
-- use ATR-normalised distances instead of absolute-price thresholds;
-- require participation from relative volume on the trigger bar;
-- optionally require BTC directional compatibility;
-- fail closed on missing/invalid data.
-"""
+"""Independent Strategy V2: multi-timeframe trend pullback continuation."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -43,11 +30,11 @@ def _field(candle: Mapping[str, object], name: str) -> float | None:
 
 def _closes(candles: Sequence[Mapping[str, object]]) -> list[float]:
     out: list[float] = []
-    for c in candles:
-        x = _field(c, "close")
-        if x is None or x <= 0:
+    for candle in candles:
+        value = _field(candle, "close")
+        if value is None or value <= 0:
             return []
-        out.append(x)
+        out.append(value)
     return out
 
 
@@ -64,19 +51,19 @@ def _ema(values: Sequence[float], period: int) -> float | None:
 def _atr(candles: Sequence[Mapping[str, object]], period: int = 14) -> float | None:
     if len(candles) < period + 1:
         return None
-    trs: list[float] = []
-    prev_close = _field(candles[-period - 1], "close")
-    if prev_close is None:
+    previous_close = _field(candles[-period - 1], "close")
+    if previous_close is None:
         return None
-    for c in candles[-period:]:
-        high = _field(c, "high")
-        low = _field(c, "low")
-        close = _field(c, "close")
+    true_ranges: list[float] = []
+    for candle in candles[-period:]:
+        high = _field(candle, "high")
+        low = _field(candle, "low")
+        close = _field(candle, "close")
         if high is None or low is None or close is None or high < low:
             return None
-        trs.append(max(high - prev_close, low * 0 + abs(high - prev_close), abs(low - prev_close), high - low))
-        prev_close = close
-    return sum(trs) / len(trs)
+        true_ranges.append(max(high - low, abs(high - previous_close), abs(low - previous_close)))
+        previous_close = close
+    return sum(true_ranges) / len(true_ranges)
 
 
 def _slope(values: Sequence[float], lookback: int) -> float | None:
@@ -89,55 +76,54 @@ def _relative_volume(candles: Sequence[Mapping[str, object]], lookback: int = 20
     if len(candles) < lookback + 1:
         return None
     current = _field(candles[-1], "volume")
-    history = [_field(c, "volume") for c in candles[-lookback - 1:-1]]
-    if current is None or current < 0 or any(x is None or x < 0 for x in history):
+    history = [_field(candle, "volume") for candle in candles[-lookback - 1:-1]]
+    if current is None or current < 0 or any(value is None or value < 0 for value in history):
         return None
-    avg = sum(x for x in history if x is not None) / len(history)
-    return current / avg if avg > 0 else None
+    average = sum(value for value in history if value is not None) / len(history)
+    return current / average if average > 0 else None
 
 
 def _structure(candles: Sequence[Mapping[str, object]], direction: str) -> tuple[bool, bool]:
     if len(candles) < 4:
         return False, False
-    highs = [_field(c, "high") for c in candles[-4:]]
-    lows = [_field(c, "low") for c in candles[-4:]]
-    if any(x is None for x in highs + lows):
+    highs = [_field(candle, "high") for candle in candles[-4:]]
+    lows = [_field(candle, "low") for candle in candles[-4:]]
+    if any(value is None for value in highs + lows):
         return False, False
-    h = [x for x in highs if x is not None]
-    l = [x for x in lows if x is not None]
+    high_values = [value for value in highs if value is not None]
+    low_values = [value for value in lows if value is not None]
     if direction == "LONG":
-        return h[-1] >= h[-2] and l[-1] >= l[-2], l[-1] > l[0]
-    return h[-1] <= h[-2] and l[-1] <= l[-2], h[-1] < h[0]
+        return high_values[-1] >= high_values[-2] and low_values[-1] >= low_values[-2], low_values[-1] > low_values[0]
+    return high_values[-1] <= high_values[-2] and low_values[-1] <= low_values[-2], high_values[-1] < high_values[0]
 
 
 def _pullback_trigger(candles: Sequence[Mapping[str, object]], direction: str, atr: float, ema_fast: float) -> tuple[bool, float]:
     if len(candles) < 4 or atr <= 0:
         return False, 0.0
-    current = candles[-1]
-    prev = candles[-2]
+    current, previous = candles[-1], candles[-2]
     close = _field(current, "close")
     high = _field(current, "high")
     low = _field(current, "low")
     open_ = _field(current, "open")
-    prev_close = _field(prev, "close")
-    prev_low = _field(prev, "low")
-    prev_high = _field(prev, "high")
-    lows = [_field(c, "low") for c in candles[-4:-1]]
-    highs = [_field(c, "high") for c in candles[-4:-1]]
-    if None in (close, high, low, open_, prev_close, prev_low, prev_high) or any(x is None for x in lows + highs):
+    previous_close = _field(previous, "close")
+    previous_low = _field(previous, "low")
+    previous_high = _field(previous, "high")
+    lows = [_field(candle, "low") for candle in candles[-4:-1]]
+    highs = [_field(candle, "high") for candle in candles[-4:-1]]
+    if None in (close, high, low, open_, previous_close, previous_low, previous_high) or any(value is None for value in lows + highs):
         return False, 0.0
     assert close is not None and high is not None and low is not None and open_ is not None
-    assert prev_close is not None and prev_low is not None and prev_high is not None
+    assert previous_close is not None and previous_low is not None and previous_high is not None
     body = abs(close - open_)
     if direction == "LONG":
-        pullback = min(x for x in lows if x is not None)
-        reclaimed = close > ema_fast and prev_close <= ema_fast * 1.001
-        impulse = close > prev_high and body / atr >= 0.25
+        pullback = min(value for value in lows if value is not None)
+        reclaimed = close > ema_fast and previous_close <= ema_fast * 1.001
+        impulse = close > previous_high and body / atr >= 0.25
         depth = max(0.0, (ema_fast - pullback) / atr)
     else:
-        pullback = max(x for x in highs if x is not None)
-        reclaimed = close < ema_fast and prev_close >= ema_fast * 0.999
-        impulse = close < prev_low and body / atr >= 0.25
+        pullback = max(value for value in highs if value is not None)
+        reclaimed = close < ema_fast and previous_close >= ema_fast * 0.999
+        impulse = close < previous_low and body / atr >= 0.25
         depth = max(0.0, (pullback - ema_fast) / atr)
     return reclaimed and impulse and depth <= 1.5, depth
 
