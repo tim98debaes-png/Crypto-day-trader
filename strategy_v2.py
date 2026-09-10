@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from math import isfinite
-from typing import Iterable, Mapping, Sequence
+from typing import Mapping, Sequence
 
 
 @dataclass(frozen=True)
@@ -27,7 +27,6 @@ class StrategyV2Signal:
     entry_price: float
     stop_distance: float
     features: Mapping[str, float | bool]
-
 
 
 def _f(value: object) -> float | None:
@@ -75,7 +74,7 @@ def _atr(candles: Sequence[Mapping[str, object]], period: int = 14) -> float | N
         close = _field(c, "close")
         if high is None or low is None or close is None or high < low:
             return None
-        trs.append(max(high - low, abs(high - prev_close), abs(low - prev_close)))
+        trs.append(max(high - prev_close, low * 0 + abs(high - prev_close), abs(low - prev_close), high - low))
         prev_close = close
     return sum(trs) / len(trs)
 
@@ -112,7 +111,7 @@ def _structure(candles: Sequence[Mapping[str, object]], direction: str) -> tuple
 
 
 def _pullback_trigger(candles: Sequence[Mapping[str, object]], direction: str, atr: float, ema_fast: float) -> tuple[bool, float]:
-    if len(candles) < 4:
+    if len(candles) < 4 or atr <= 0:
         return False, 0.0
     current = candles[-1]
     prev = candles[-2]
@@ -123,104 +122,62 @@ def _pullback_trigger(candles: Sequence[Mapping[str, object]], direction: str, a
     prev_close = _field(prev, "close")
     prev_low = _field(prev, "low")
     prev_high = _field(prev, "high")
-    if None in (close, high, low, open_, prev_close, prev_low, prev_high):
+    lows = [_field(c, "low") for c in candles[-4:-1]]
+    highs = [_field(c, "high") for c in candles[-4:-1]]
+    if None in (close, high, low, open_, prev_close, prev_low, prev_high) or any(x is None for x in lows + highs):
         return False, 0.0
     assert close is not None and high is not None and low is not None and open_ is not None
     assert prev_close is not None and prev_low is not None and prev_high is not None
-    if atr <= 0:
-        return False, 0.0
     body = abs(close - open_)
     if direction == "LONG":
-        pullback = min(c["low"] for c in candles[-4:-1] if _field(c, "low") is not None)
+        pullback = min(x for x in lows if x is not None)
         reclaimed = close > ema_fast and prev_close <= ema_fast * 1.001
         impulse = close > prev_high and body / atr >= 0.25
         depth = max(0.0, (ema_fast - pullback) / atr)
     else:
-        pullback = max(c["high"] for c in candles[-4:-1] if _field(c, "high") is not None)
+        pullback = max(x for x in highs if x is not None)
         reclaimed = close < ema_fast and prev_close >= ema_fast * 0.999
         impulse = close < prev_low and body / atr >= 0.25
         depth = max(0.0, (pullback - ema_fast) / atr)
     return reclaimed and impulse and depth <= 1.5, depth
 
 
-def generate_signal(
-    candles_5m: Sequence[Mapping[str, object]],
-    candles_15m: Sequence[Mapping[str, object]],
-    candles_1h: Sequence[Mapping[str, object]],
-    btc_1h: Sequence[Mapping[str, object]] | None = None,
-) -> StrategyV2Signal | None:
-    """Return one new signal using only completed candles, or ``None``.
-
-    The final candle in every input is treated as completed. Callers must not
-    pass a still-forming candle.
-    """
+def generate_signal(candles_5m: Sequence[Mapping[str, object]], candles_15m: Sequence[Mapping[str, object]], candles_1h: Sequence[Mapping[str, object]], btc_1h: Sequence[Mapping[str, object]] | None = None) -> StrategyV2Signal | None:
+    """Return one signal from completed candles only, otherwise ``None``."""
     if min(len(candles_5m), len(candles_15m), len(candles_1h)) < 30:
         return None
-    c5 = _closes(candles_5m)
-    c15 = _closes(candles_15m)
-    c1 = _closes(candles_1h)
+    c5, c15, c1 = _closes(candles_5m), _closes(candles_15m), _closes(candles_1h)
     if not c5 or not c15 or not c1:
         return None
-
     e1_fast, e1_slow = _ema(c1, 20), _ema(c1, 50)
     e15_fast, e15_slow = _ema(c15, 20), _ema(c15, 50)
-    e5_fast = _ema(c5, 20)
-    atr5 = _atr(candles_5m)
-    rv5 = _relative_volume(candles_5m)
+    e5_fast, atr5, rv5 = _ema(c5, 20), _atr(candles_5m), _relative_volume(candles_5m)
     if None in (e1_fast, e1_slow, e15_fast, e15_slow, e5_fast, atr5, rv5):
         return None
-    assert e1_fast is not None and e1_slow is not None and e15_fast is not None
-    assert e15_slow is not None and e5_fast is not None and atr5 is not None and rv5 is not None
+    assert e1_fast is not None and e1_slow is not None and e15_fast is not None and e15_slow is not None
+    assert e5_fast is not None and atr5 is not None and rv5 is not None
     if atr5 <= 0 or rv5 <= 0:
         return None
-
-    trend_up = e1_fast > e1_slow and e15_fast > e15_slow
-    trend_down = e1_fast < e1_slow and e15_fast < e15_slow
-    slope15 = _slope(c15, 4)
-    slope1 = _slope(c1, 4)
+    slope15, slope1 = _slope(c15, 4), _slope(c1, 4)
     if slope15 is None or slope1 is None:
         return None
-
+    btc_direction = None
+    if btc_1h is not None:
+        btc = _closes(btc_1h)
+        bfast, bslow = _ema(btc, 20), _ema(btc, 50)
+        if bfast is None or bslow is None:
+            return None
+        btc_direction = "LONG" if bfast >= bslow else "SHORT"
     candidates: list[StrategyV2Signal] = []
     for direction in ("LONG", "SHORT"):
-        if direction == "LONG":
-            trend = trend_up and slope15 > 0 and slope1 > 0
-            structure, continuation = _structure(c15, direction)
-        else:
-            trend = trend_down and slope15 < 0 and slope1 < 0
-            structure, continuation = _structure(c15, direction)
+        trend = (e1_fast > e1_slow and e15_fast > e15_slow and slope15 > 0 and slope1 > 0) if direction == "LONG" else (e1_fast < e1_slow and e15_fast < e15_slow and slope15 < 0 and slope1 < 0)
+        structure, continuation = _structure(c15, direction)
         trigger, pullback_depth = _pullback_trigger(candles_5m, direction, atr5, e5_fast)
         participation = rv5 >= 1.0
-        btc_ok = True
-        if btc_1h is not None and len(btc_1h) >= 30:
-            btc = _closes(btc_1h)
-            bfast, bslow = _ema(btc, 20), _ema(btc, 50)
-            if bfast is None or bslow is None:
-                return None
-            btc_ok = bfast >= bslow if direction == "LONG" else bfast <= bslow
+        btc_ok = btc_direction is None or btc_direction == direction
         score = sum((trend, structure, continuation, trigger, participation, btc_ok))
         if score < 6:
             continue
         close = c5[-1]
-        candidates.append(StrategyV2Signal(
-            direction=direction,
-            score=score,
-            reason="v2_trend_pullback_continuation",
-            entry_price=close,
-            stop_distance=max(atr5 * 1.5, close * 0.003),
-            features={
-                "trend": trend,
-                "structure": structure,
-                "continuation": continuation,
-                "trigger": trigger,
-                "participation": participation,
-                "btc_ok": btc_ok,
-                "pullback_depth_atr": pullback_depth,
-                "relative_volume": rv5,
-                "slope_15m": slope15,
-                "slope_1h": slope1,
-            },
-        ))
-    if not candidates:
-        return None
-    return max(candidates, key=lambda x: x.score)
+        candidates.append(StrategyV2Signal(direction, score, "v2_trend_pullback_continuation", close, max(atr5 * 1.5, close * 0.003), {"trend": trend, "structure": structure, "continuation": continuation, "trigger": trigger, "participation": participation, "btc_ok": btc_ok, "pullback_depth_atr": pullback_depth, "relative_volume": rv5, "slope_15m": slope15, "slope_1h": slope1}))
+    return max(candidates, key=lambda x: x.score) if candidates else None
