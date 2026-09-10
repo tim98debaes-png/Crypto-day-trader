@@ -15,6 +15,9 @@ on:
       - "tests/test_strategy_v2.py"
       - "tests/test_strategy_v2_replay.py"
       - ".github/workflows/phase3-historical-benchmark.yml"
+  push:
+    branches:
+      - "strategy-v2-reset-2026-09-10"
 
 permissions:
   contents: read
