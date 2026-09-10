@@ -23,6 +23,22 @@ def test_entry_details_exposes_five_factor_score():
     }
 
 
+def test_short_entry_requires_all_four_bounce_checks():
+    # All five legacy score factors pass and the pullback has 3/4 bounce
+    # checks. The controlled experiment intentionally rejects this SHORT setup.
+    prices = [
+        100.0, 99.9137328838, 99.7629017390, 99.7772540815,
+        99.5964016259, 99.6832231509, 99.8445549559, 99.7454583204,
+        99.7754951206, 99.6420688042, 99.5394583253, 99.5060180420,
+    ]
+    ready, reason, score, confirmations = entry_signal_details(prices, "SHORT")
+    assert score == 5
+    assert confirmations["bounce_score"] == 3
+    assert confirmations["pullback_bounce"] is False
+    assert ready is False
+    assert reason == "bounce_not_confirmed"
+
+
 def test_tier_b_risk_override_is_half_standard():
     account = PaperAccount(capital=1000.0, fee_pct=0.0, slippage_pct=0.0)
     position = account.open_position("BTCUSDT", "LONG", 100.0, 1.0, 2.0, risk_pct_override=0.25, strategy_score=3, strategy_tier="B")
