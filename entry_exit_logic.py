@@ -53,9 +53,10 @@ def entry_signal_details(prices: list[float], direction: str = "LONG"):
         return False, "invalid_direction", 0, {}
     price = prices[-1]
     fast, slow, short, medium, positive, negative, confirmed_bounce, touched, bounce_score, bounce_checks = _entry_metrics(prices, direction)
+    near_fast_limit = 0.0045 if direction == "SHORT" else 0.0065
     confirmations = {
         "trend": fast >= slow if direction == "LONG" else fast <= slow,
-        "price_near_fast": abs(price / fast - 1.0) <= 0.0065,
+        "price_near_fast": abs(price / fast - 1.0) <= near_fast_limit,
         "medium_momentum": medium >= 0.0005 if direction == "LONG" else medium <= -0.0005,
         "short_momentum": short >= 0.0005 if direction == "LONG" else short <= -0.0005,
         "positive_microstructure": positive >= 2 if direction == "LONG" else negative >= 2,
