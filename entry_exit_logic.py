@@ -41,7 +41,10 @@ def _entry_metrics(prices: list[float], direction: str):
         "pullback_structure": structure,
     }
     bounce_score = sum(bounce_checks.values())
-    confirmed_bounce = bounce_score >= 3
+    # Keep the existing LONG contract unchanged. For SHORTs, require all four
+    # bounce checks so the strongest discovered SHORT cluster is tested with a
+    # strictly higher-quality pullback confirmation rather than a looser gate.
+    confirmed_bounce = bounce_score >= (4 if direction == "SHORT" else 3)
     return fast, slow, short, medium, positive, negative, confirmed_bounce, touched, bounce_score, bounce_checks
 
 
