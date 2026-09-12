@@ -10,10 +10,13 @@ on:
       - "research/strategy_v2_entry_diagnostics.py"
       - "tests/test_strategy_v2.py"
       - "tests/test_strategy_v2_replay.py"
+      - "tests/test_strategy_v2_pullback.py"
       - ".github/workflows/strategy-v2-validation.yml"
   push:
     branches:
       - "strategy-v2-entry-diagnostics-2026-09-12"
+      - "strategy-v2-reclaim-window-2026-09-12"
+      - "strategy-v2-corrected-baseline-2026-09-12"
 
 permissions:
   contents: read
@@ -40,6 +43,7 @@ jobs:
           python -m pytest -q
           tests/test_strategy_v2.py
           tests/test_strategy_v2_replay.py
+          tests/test_strategy_v2_pullback.py
           && python -m py_compile strategy_v2.py research/strategy_v2_replay.py research/strategy_v2_entry_diagnostics.py
       - name: Download one-minute V2 dataset
         run: >-
@@ -52,6 +56,14 @@ jobs:
       - name: Validate dataset manifest
         run: >-
           python -c "import json; m=json.load(open('data/historical/manifest.json')); assert m['status']=='DATASET_READY'; assert m['interval']=='1m'; assert len(m['symbols'])==10; assert all(x['candles']>10000 for x in m['files']); print(json.dumps(m, indent=2))"
+      - name: Run Strategy V2 paper-parity replay
+        run: >-
+          python -m research.strategy_v2_replay
+          --data data/historical
+          --output strategy-v2-results
+      - name: Validate Strategy V2 replay report
+        run: >-
+          python -c "import json, math; r=json.load(open('strategy-v2-results/strategy_v2_report.json')); result=r['result']; diagnostics=r['diagnostics']; assert r['status']=='EXECUTION_COMPLETE'; assert r['procedure']=='strategy_v2_event_replay'; assert r['strategy']=='V2'; assert r['robustness_policy']=='unchanged'; assert result['closed_trades'] >= 0; assert diagnostics['signals'] >= diagnostics['opened_trades']; assert all(math.isfinite(float(result[k])) for k in ('final_equity','pnl','return_pct','max_drawdown_pct','win_rate_pct','profit_factor')); print(json.dumps(r, indent=2))"
       - name: Run Strategy V2 entry funnel diagnostics
         run: >-
           python -m research.strategy_v2_entry_diagnostics
@@ -60,6 +72,11 @@ jobs:
       - name: Validate diagnostic report
         run: >-
           python -c "import json; r=json.load(open('strategy-v2-entry-diagnostics/strategy_v2_entry_diagnostics.json')); assert r['status']=='EXECUTION_COMPLETE'; assert r['procedure']=='strategy_v2_entry_gate_diagnostics'; assert r['sampling']['required_mtf_history']==50; assert r['parity']['failures']==0; print(json.dumps(r, indent=2))"
+      - name: Upload Strategy V2 results
+        uses: actions/upload-artifact@v4
+        with:
+          name: strategy-v2-results
+          path: strategy-v2-results/
       - name: Upload Strategy V2 entry diagnostics
         uses: actions/upload-artifact@v4
         with:
