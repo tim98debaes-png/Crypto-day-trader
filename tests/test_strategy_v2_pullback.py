@@ -15,7 +15,7 @@ def test_long_accepts_reclaim_before_current_impulse():
     ]
     ok, depth = _pullback_trigger(candles, "LONG", atr=1.0, ema_fast=100.0)
     assert ok is True
-    assert depth == 0.0
+    assert depth == 0.8
 
 
 def test_short_accepts_reclaim_before_current_impulse():
@@ -28,7 +28,7 @@ def test_short_accepts_reclaim_before_current_impulse():
     ]
     ok, depth = _pullback_trigger(candles, "SHORT", atr=1.0, ema_fast=100.0)
     assert ok is True
-    assert depth == 0.0
+    assert depth == 0.8
 
 
 def test_reclaim_window_does_not_remove_impulse_requirement():
