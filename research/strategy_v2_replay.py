@@ -11,7 +11,7 @@ import pandas as pd
 from paper_engine import PaperAccount
 from research.paper_parity_replay import ReplayConfig, _manage_position, _record, _stats, _summary, load_dataset
 from research.strategy_v2_metrics import build_metrics
-from research.strategy_v2_monte_carlo import trade_order_monte_carlo
+from research.strategy_v2_monte_carlo import bootstrap_monte_carlo, trade_order_monte_carlo
 from strategy_risk_controls import RISK_CONFIG, exceeds_correlation_limit, sector_position_count
 from strategy_v2 import generate_signal
 
@@ -117,6 +117,7 @@ def run_v2(frames: dict[str, pd.DataFrame], config: ReplayConfig = ReplayConfig(
         curve.append(account.equity())
     diagnostics["robustness_metrics"] = build_metrics(curve, account.audit_log)
     diagnostics["trade_order_monte_carlo"] = trade_order_monte_carlo(account.audit_log, initial_capital=config.capital, simulations=500, seed=42)
+    diagnostics["bootstrap_monte_carlo"] = bootstrap_monte_carlo(account.audit_log, initial_capital=config.capital, simulations=1000, seed=42)
     return _summary(account, stats, curve), diagnostics
 
 
@@ -126,7 +127,7 @@ def main() -> None:
     parser.add_argument("--output", required=True)
     args = parser.parse_args()
     result, diagnostics = run_v2(load_dataset(Path(args.data)))
-    report = {"schema_version": 3, "status": "EXECUTION_COMPLETE", "procedure": "strategy_v2_event_replay", "data_interval": "1m", "strategy": "V2", "execution": {"capital": 1000.0, "risk_pct": 0.5, "fee_pct": 0.1, "slippage_pct": 0.02, "max_daily_loss_pct": 3.0}, "result": result, "diagnostics": diagnostics, "robustness_policy": "unchanged"}
+    report = {"schema_version": 4, "status": "EXECUTION_COMPLETE", "procedure": "strategy_v2_event_replay", "data_interval": "1m", "strategy": "V2", "execution": {"capital": 1000.0, "risk_pct": 0.5, "fee_pct": 0.1, "slippage_pct": 0.02, "max_daily_loss_pct": 3.0}, "result": result, "diagnostics": diagnostics, "robustness_policy": "unchanged"}
     output = Path(args.output)
     output.mkdir(parents=True, exist_ok=True)
     (output / "strategy_v2_report.json").write_text(json.dumps(report, indent=2, default=str) + "\n", encoding="utf-8")
