@@ -9,6 +9,7 @@ on:
       - "research/strategy_v2_replay.py"
       - "research/strategy_v2_entry_diagnostics.py"
       - "research/strategy_v2_metrics.py"
+      - "research/strategy_v2_monte_carlo.py"
       - "tests/test_strategy_v2.py"
       - "tests/test_strategy_v2_replay.py"
       - "tests/test_strategy_v2_pullback.py"
@@ -48,7 +49,7 @@ jobs:
           tests/test_strategy_v2_replay.py
           tests/test_strategy_v2_pullback.py
           tests/test_strategy_v2_replay_safety.py
-          && python -m py_compile strategy_v2.py research/strategy_v2_replay.py research/strategy_v2_entry_diagnostics.py research/strategy_v2_metrics.py
+          && python -m py_compile strategy_v2.py research/strategy_v2_replay.py research/strategy_v2_entry_diagnostics.py research/strategy_v2_metrics.py research/strategy_v2_monte_carlo.py
       - name: Download one-minute V2 dataset
         run: >-
           python -m research.run_step2b
@@ -67,7 +68,7 @@ jobs:
           --output strategy-v2-results
       - name: Validate Strategy V2 replay report
         run: >-
-          python -c "import json, math; r=json.load(open('strategy-v2-results/strategy_v2_report.json')); result=r['result']; diagnostics=r['diagnostics']; metrics=diagnostics['robustness_metrics']; assert r['status']=='EXECUTION_COMPLETE'; assert r['procedure']=='strategy_v2_event_replay'; assert r['strategy']=='V2'; assert r['robustness_policy']=='unchanged'; assert result['closed_trades'] >= 0; assert diagnostics['signals'] >= diagnostics['opened_trades']; assert all(math.isfinite(float(result[k])) for k in ('final_equity','pnl','return_pct','max_drawdown_pct','win_rate_pct','profit_factor')); assert all(math.isfinite(float(metrics[k])) for k in ('sharpe_ratio','sortino_ratio','calmar_ratio','expectancy_per_trade','payoff_ratio','profit_factor')); print(json.dumps(r, indent=2))"
+          python -c "import json, math; r=json.load(open('strategy-v2-results/strategy_v2_report.json')); result=r['result']; diagnostics=r['diagnostics']; metrics=diagnostics['robustness_metrics']; mc=diagnostics['trade_order_monte_carlo']; assert r['status']=='EXECUTION_COMPLETE'; assert r['procedure']=='strategy_v2_event_replay'; assert r['strategy']=='V2'; assert r['robustness_policy']=='unchanged'; assert result['closed_trades'] >= 0; assert diagnostics['signals'] >= diagnostics['opened_trades']; assert all(math.isfinite(float(result[k])) for k in ('final_equity','pnl','return_pct','max_drawdown_pct','win_rate_pct','profit_factor')); assert all(math.isfinite(float(metrics[k])) for k in ('sharpe_ratio','sortino_ratio','calmar_ratio','expectancy_per_trade','payoff_ratio','profit_factor')); assert all(math.isfinite(float(mc[k])) for k in ('median_final_equity','p05_final_equity','p95_final_equity','probability_of_loss_pct','median_max_drawdown_pct','p95_max_drawdown_pct')); print(json.dumps(r, indent=2))"
       - name: Run Strategy V2 entry funnel diagnostics
         run: >-
           python -m research.strategy_v2_entry_diagnostics
