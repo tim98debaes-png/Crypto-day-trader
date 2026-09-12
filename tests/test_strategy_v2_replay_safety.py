@@ -2,6 +2,7 @@ import pandas as pd
 
 from research.strategy_v2_replay import _completed, _resample
 from research.strategy_v2_metrics import build_metrics
+from research.strategy_v2_monte_carlo import trade_order_monte_carlo
 
 
 def _minute_frame():
@@ -38,3 +39,18 @@ def test_metrics_are_finite_and_include_robustness_measures():
         assert pd.notna(metrics[key])
     assert metrics["closed_trades"] == 2
     assert metrics["max_consecutive_losses"] == 1
+
+
+def test_trade_order_monte_carlo_is_deterministic():
+    audit = [
+        {"event": "CLOSE", "pnl": 10.0},
+        {"event": "CLOSE", "pnl": -6.0},
+        {"event": "CLOSE", "pnl": 4.0},
+        {"event": "CLOSE", "pnl": -2.0},
+    ]
+    first = trade_order_monte_carlo(audit, simulations=100, seed=42)
+    second = trade_order_monte_carlo(audit, simulations=100, seed=42)
+    assert first == second
+    assert first["trades"] == 4
+    assert first["simulations"] == 100
+    assert 0.0 <= first["probability_of_loss_pct"] <= 100.0
