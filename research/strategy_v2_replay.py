@@ -10,6 +10,7 @@ import pandas as pd
 
 from paper_engine import PaperAccount
 from research.paper_parity_replay import ReplayConfig, _manage_position, _record, _stats, _summary, load_dataset
+from research.strategy_v2_metrics import build_metrics
 from strategy_risk_controls import RISK_CONFIG, exceeds_correlation_limit, sector_position_count
 from strategy_v2 import generate_signal
 
@@ -20,7 +21,7 @@ def _resample(frame: pd.DataFrame, rule: str) -> pd.DataFrame:
 
 
 def _completed(series: pd.DataFrame, timestamp: pd.Timestamp, count: int = 60) -> list[dict]:
-    """Return enough completed MTF bars for Strategy V2's 50-bar minimum."""
+    """Return only fully completed MTF bars strictly before the decision time."""
     return series[series["timestamp"] < timestamp].tail(count).to_dict("records")
 
 
@@ -113,7 +114,7 @@ def run_v2(frames: dict[str, pd.DataFrame], config: ReplayConfig = ReplayConfig(
             pending[symbol] = candidate
         diagnostics["max_open_positions"] = max(diagnostics["max_open_positions"], len(account.positions))
         curve.append(account.equity())
-    return _summary(account, stats, curve), diagnostics
+    return _summary(account, stats, curve), {**diagnostics, "robustness_metrics": build_metrics(curve, account.audit_log)}
 
 
 def main() -> None:
@@ -122,7 +123,7 @@ def main() -> None:
     parser.add_argument("--output", required=True)
     args = parser.parse_args()
     result, diagnostics = run_v2(load_dataset(Path(args.data)))
-    report = {"schema_version": 1, "status": "EXECUTION_COMPLETE", "procedure": "strategy_v2_event_replay", "data_interval": "1m", "strategy": "V2", "execution": {"capital": 1000.0, "risk_pct": 0.5, "fee_pct": 0.1, "slippage_pct": 0.02, "max_daily_loss_pct": 3.0}, "result": result, "diagnostics": diagnostics, "robustness_policy": "unchanged"}
+    report = {"schema_version": 2, "status": "EXECUTION_COMPLETE", "procedure": "strategy_v2_event_replay", "data_interval": "1m", "strategy": "V2", "execution": {"capital": 1000.0, "risk_pct": 0.5, "fee_pct": 0.1, "slippage_pct": 0.02, "max_daily_loss_pct": 3.0}, "result": result, "diagnostics": diagnostics, "robustness_policy": "unchanged"}
     output = Path(args.output)
     output.mkdir(parents=True, exist_ok=True)
     (output / "strategy_v2_report.json").write_text(json.dumps(report, indent=2, default=str) + "\n", encoding="utf-8")
