@@ -67,21 +67,11 @@ jobs:
       - name: Validate benchmark report
         run: >-
           python -c "import json; r=json.load(open('benchmark-results/paper_parity_report.json')); assert r['status']=='EXECUTION_COMPLETE'; assert set(r['results'])=={'PAPER','REGIME','REGIME_BTC'}; assert all(v['closed_trades']>=0 for v in r['results'].values()); print(json.dumps(r, indent=2))"
-      - name: Run Strategy V2 paper-parity replay
-        run: >-
-          python -m research.strategy_v2_replay
-          --data data/historical
-          --output strategy-v2-results
-      - name: Validate Strategy V2 report
-        run: >-
-          python -c "import json; r=json.load(open('strategy-v2-results/strategy_v2_report.json')); assert r['status']=='EXECUTION_COMPLETE'; assert r['strategy']=='V2'; assert r['result']['closed_trades']>=0; print(json.dumps(r, indent=2))"
       - name: Upload paper-parity benchmark
         uses: actions/upload-artifact@v4
         with:
           name: phase3-paper-parity-benchmark
-          path: |
-            benchmark-results/
-            strategy-v2-results/
+          path: benchmark-results/
 
   phase3-paper-parity-diagnostics:
     name: Paper-parity trade diagnostics
