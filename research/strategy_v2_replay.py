@@ -19,7 +19,8 @@ def _resample(frame: pd.DataFrame, rule: str) -> pd.DataFrame:
     return f.resample(rule, label="left", closed="left").agg({"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"}).dropna().reset_index()
 
 
-def _completed(series: pd.DataFrame, timestamp: pd.Timestamp, count: int = 30) -> list[dict]:
+def _completed(series: pd.DataFrame, timestamp: pd.Timestamp, count: int = 60) -> list[dict]:
+    """Return enough completed MTF bars for Strategy V2's 50-bar minimum."""
     return series[series["timestamp"] < timestamp].tail(count).to_dict("records")
 
 
@@ -40,7 +41,7 @@ def _signal_candidates(symbol, timestamp, bars, account, history, btc_bars, diag
     c15 = _completed(bars[symbol]["15m"], timestamp)
     c1 = _completed(bars[symbol]["1h"], timestamp)
     btc1 = _completed(btc_bars["1h"], timestamp)
-    if min(len(c5), len(c15), len(c1)) < 30:
+    if min(len(c5), len(c15), len(c1)) < 50:
         diagnostics["insufficient_mtf"] += 1
         return []
     signal = generate_signal(c5, c15, c1, btc1)
