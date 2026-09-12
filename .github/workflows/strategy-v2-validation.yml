@@ -7,12 +7,13 @@ on:
     paths:
       - "strategy_v2.py"
       - "research/strategy_v2_replay.py"
+      - "research/strategy_v2_entry_diagnostics.py"
       - "tests/test_strategy_v2.py"
       - "tests/test_strategy_v2_replay.py"
       - ".github/workflows/strategy-v2-validation.yml"
   push:
     branches:
-      - "strategy-v2-reset-2026-09-10"
+      - "strategy-v2-entry-diagnostics-2026-09-12"
 
 permissions:
   contents: read
@@ -39,7 +40,7 @@ jobs:
           python -m pytest -q
           tests/test_strategy_v2.py
           tests/test_strategy_v2_replay.py
-          && python -m py_compile strategy_v2.py research/strategy_v2_replay.py
+          && python -m py_compile strategy_v2.py research/strategy_v2_replay.py research/strategy_v2_entry_diagnostics.py
       - name: Download one-minute V2 dataset
         run: >-
           python -m research.run_step2b
@@ -51,16 +52,16 @@ jobs:
       - name: Validate dataset manifest
         run: >-
           python -c "import json; m=json.load(open('data/historical/manifest.json')); assert m['status']=='DATASET_READY'; assert m['interval']=='1m'; assert len(m['symbols'])==10; assert all(x['candles']>10000 for x in m['files']); print(json.dumps(m, indent=2))"
-      - name: Run Strategy V2 paper-parity replay
+      - name: Run Strategy V2 entry funnel diagnostics
         run: >-
-          python -m research.strategy_v2_replay
+          python -m research.strategy_v2_entry_diagnostics
           --data data/historical
-          --output strategy-v2-results
-      - name: Validate Strategy V2 report
+          --output strategy-v2-entry-diagnostics
+      - name: Validate diagnostic report
         run: >-
-          python -c "import json; r=json.load(open('strategy-v2-results/strategy_v2_report.json')); assert r['status']=='EXECUTION_COMPLETE'; assert r['strategy']=='V2'; assert r['result']['closed_trades']>=0; print(json.dumps(r, indent=2))"
-      - name: Upload Strategy V2 results
+          python -c "import json; r=json.load(open('strategy-v2-entry-diagnostics/strategy_v2_entry_diagnostics.json')); assert r['status']=='EXECUTION_COMPLETE'; assert r['diagnostic_only'] is True; assert r['strategy']=='V2'; print(json.dumps(r, indent=2))"
+      - name: Upload Strategy V2 entry diagnostics
         uses: actions/upload-artifact@v4
         with:
-          name: strategy-v2-results
-          path: strategy-v2-results/
+          name: strategy-v2-entry-diagnostics
+          path: strategy-v2-entry-diagnostics/
