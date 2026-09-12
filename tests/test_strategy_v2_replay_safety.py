@@ -2,7 +2,7 @@ import pandas as pd
 
 from research.strategy_v2_replay import _completed, _resample
 from research.strategy_v2_metrics import build_metrics
-from research.strategy_v2_monte_carlo import trade_order_monte_carlo
+from research.strategy_v2_monte_carlo import bootstrap_monte_carlo, trade_order_monte_carlo
 
 
 def _minute_frame():
@@ -53,4 +53,20 @@ def test_trade_order_monte_carlo_is_deterministic():
     assert first == second
     assert first["trades"] == 4
     assert first["simulations"] == 100
+    assert 0.0 <= first["probability_of_loss_pct"] <= 100.0
+
+
+def test_bootstrap_monte_carlo_is_deterministic_and_has_variable_outcomes():
+    audit = [
+        {"event": "CLOSE", "pnl": 10.0},
+        {"event": "CLOSE", "pnl": -6.0},
+        {"event": "CLOSE", "pnl": 4.0},
+        {"event": "CLOSE", "pnl": -2.0},
+    ]
+    first = bootstrap_monte_carlo(audit, simulations=500, seed=42)
+    second = bootstrap_monte_carlo(audit, simulations=500, seed=42)
+    assert first == second
+    assert first["trades_per_simulation"] == 4
+    assert first["simulations"] == 500
+    assert first["p05_final_equity"] != first["p95_final_equity"]
     assert 0.0 <= first["probability_of_loss_pct"] <= 100.0
