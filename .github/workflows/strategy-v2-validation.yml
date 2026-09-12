@@ -62,7 +62,7 @@ jobs:
           --output strategy-v2-results
       - name: Validate Strategy V2 replay report
         run: >-
-          python -c "import json; r=json.load(open('strategy-v2-results/strategy_v2_report.json')); assert r['status']=='EXECUTION_COMPLETE'; assert r['procedure']=='strategy_v2_event_replay'; assert r['strategy']=='V2'; assert r['robustness_policy']=='unchanged'; assert r['diagnostics']['opened_trades']==r['result']['closed_trades'] + r['diagnostics']['opened_trades']-r['result']['closed_trades']; print(json.dumps(r, indent=2))"
+          python -c "import json, math; r=json.load(open('strategy-v2-results/strategy_v2_report.json')); result=r['result']; diagnostics=r['diagnostics']; assert r['status']=='EXECUTION_COMPLETE'; assert r['procedure']=='strategy_v2_event_replay'; assert r['strategy']=='V2'; assert r['robustness_policy']=='unchanged'; assert result['closed_trades'] >= 0; assert diagnostics['signals'] >= diagnostics['opened_trades']; assert all(math.isfinite(float(result[k])) for k in ('final_equity','pnl','return_pct','max_drawdown_pct','win_rate_pct','profit_factor')); print(json.dumps(r, indent=2))"
       - name: Run Strategy V2 entry funnel diagnostics
         run: >-
           python -m research.strategy_v2_entry_diagnostics
