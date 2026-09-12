@@ -24,3 +24,11 @@ def test_completed_excludes_current_bucket():
     completed = _completed(frame, current, count=30)
     assert [row["timestamp"] for row in completed] == list(frame[frame["timestamp"] < current]["timestamp"])
     assert all(row["timestamp"] < current for row in completed)
+
+
+def test_completed_default_provides_strategy_v2_history_window():
+    frame = _resample(_frame(400), "5min")
+    current = frame.iloc[-1]["timestamp"] + pd.Timedelta(minutes=5)
+    completed = _completed(frame, current)
+    assert len(completed) == 60
+    assert completed[-1]["timestamp"] < current
