@@ -33,11 +33,11 @@ def test_short_requires_immediate_reclaim_before_current_impulse():
 
 def test_immediate_reclaim_with_impulse_is_accepted():
     candles = [
-        _c(101.0, 101.5, 99.5, 100.0),
-        _c(100.0, 100.5, 98.5, 99.0),
-        _c(99.0, 99.5, 98.0, 98.8),
-        _c(98.8, 99.2, 98.2, 99.0),
-        _c(99.0, 101.5, 98.8, 101.5),
+        _c(99.8, 100.8, 99.2, 99.0),
+        _c(99.0, 100.2, 98.5, 99.0),
+        _c(99.0, 100.0, 98.8, 99.2),
+        _c(99.2, 100.1, 98.9, 99.0),
+        _c(99.0, 101.5, 98.9, 101.5),
     ]
     ok, _ = _pullback_trigger(candles, "LONG", atr=1.0, ema_fast=100.0)
     assert ok is True
