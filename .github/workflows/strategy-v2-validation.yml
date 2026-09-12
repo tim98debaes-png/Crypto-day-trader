@@ -16,6 +16,7 @@ on:
     branches:
       - "strategy-v2-entry-diagnostics-2026-09-12"
       - "strategy-v2-reclaim-window-2026-09-12"
+      - "strategy-v2-corrected-baseline-2026-09-12"
 
 permissions:
   contents: read
