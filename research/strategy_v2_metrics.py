@@ -6,7 +6,7 @@ completed replay and therefore cannot change trading decisions.
 """
 from __future__ import annotations
 
-from math import isfinite, sqrt
+from math import exp, isfinite, log, sqrt
 from statistics import mean, pstdev
 from typing import Iterable, Mapping, Sequence
 
@@ -57,9 +57,18 @@ def calmar_ratio(equity_curve: Sequence[float], periods_per_year: int = 365 * 24
     if len(values) < 2 or values[0] <= 0:
         return 0.0
     periods = len(values) - 1
-    annualized_return = (values[-1] / values[0]) ** (periods_per_year / periods) - 1.0
     dd = max_drawdown_pct(values) / 100.0
-    return annualized_return / dd if dd > 0 else 0.0
+    if dd <= 0:
+        return 0.0
+
+    # Log-space annualisation prevents OverflowError on very short synthetic
+    # curves while keeping the metric deterministic and finite.
+    growth = values[-1] / values[0]
+    if growth <= 0:
+        return 0.0
+    exponent = log(growth) * (periods_per_year / periods)
+    annualized_return = exp(min(exponent, 700.0)) - 1.0
+    return annualized_return / dd
 
 
 def trade_metrics(audit_log: Sequence[Mapping[str, object]]) -> dict[str, float | int]:
