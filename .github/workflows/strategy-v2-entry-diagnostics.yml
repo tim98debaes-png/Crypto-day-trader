@@ -1,0 +1,71 @@
+name: Strategy V2 entry diagnostics
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "strategy_v2.py"
+      - "research/strategy_v2_replay.py"
+      - "research/strategy_v2_entry_diagnostics.py"
+      - "tests/test_strategy_v2_entry_diagnostics.py"
+      - ".github/workflows/strategy-v2-entry-diagnostics.yml"
+  push:
+    branches:
+      - "strategy-v2-reset-2026-09-10"
+
+permissions:
+  contents: read
+
+env:
+  PYTHONPATH: ${{ github.workspace }}
+
+jobs:
+  entry-gate-diagnostics:
+    name: Strategy V2 entry gate diagnostics
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install -r requirements.txt pytest
+      - name: Test diagnostics and Strategy V2
+        run: >-
+          python -m pytest -q
+          tests/test_strategy_v2.py
+          tests/test_strategy_v2_replay.py
+          tests/test_strategy_v2_entry_diagnostics.py
+          && python -m py_compile
+          strategy_v2.py
+          research/strategy_v2_replay.py
+          research/strategy_v2_entry_diagnostics.py
+      - name: Download one-minute diagnostic dataset
+        run: >-
+          python -m research.run_step2b
+          --start 2026-05-01T00:00:00Z
+          --end 2026-08-01T00:00:00Z
+          --interval 1m
+          --max-assets 10
+          --output data/historical
+      - name: Validate dataset manifest
+        run: >-
+          python -c "import json; m=json.load(open('data/historical/manifest.json')); assert m['status']=='DATASET_READY'; assert m['interval']=='1m'; assert len(m['symbols'])==10; assert all(x['candles']>10000 for x in m['files']); print(json.dumps(m, indent=2))"
+      - name: Run Strategy V2 entry gate diagnostics
+        run: >-
+          python -m research.strategy_v2_entry_diagnostics
+          --data data/historical
+          --output strategy-v2-entry-diagnostics
+          --stride 1
+      - name: Validate diagnostic report
+        run: >-
+          python -c "import json; r=json.load(open('strategy-v2-entry-diagnostics/strategy_v2_entry_diagnostics.json')); assert r['status']=='EXECUTION_COMPLETE'; assert r['procedure']=='strategy_v2_entry_gate_diagnostics'; assert r['parity']['failures']==0; print(json.dumps(r, indent=2))"
+      - name: Upload Strategy V2 entry diagnostics
+        uses: actions/upload-artifact@v4
+        with:
+          name: strategy-v2-entry-diagnostics
+          path: strategy-v2-entry-diagnostics/
