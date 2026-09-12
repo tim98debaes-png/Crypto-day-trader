@@ -82,18 +82,12 @@ def _structure(candles: Sequence[Mapping[str, object]], direction: str) -> tuple
     l = [float(v) for v in ls if v is not None]
     if direction == "LONG":
         return h[-1] > h[-2] and l[-1] > l[-2], h[-1] > h[0] and l[-1] > l[0]
-    return h[-1] < h[-2] and l[-1] < l[-2], h[-1] < h[-2] and l[-1] < l[0]
+    return h[-1] < h[-2] and l[-1] < l[-2], h[-1] < h[0] and l[-1] < l[0]
 
 def _pullback_trigger(
     candles: Sequence[Mapping[str, object]], direction: str, atr: float, ema_fast: float
 ) -> tuple[bool, float]:
-    """Require a recent EMA20 reclaim followed by a breakout impulse.
-
-    The reclaim and impulse no longer have to occur on the same 5m bar. A
-    reclaim in the prior three completed bars is accepted, while the current
-    bar must still provide the breakout/body impulse. Pullback depth remains
-    ATR-normalised and unchanged.
-    """
+    """Require a recent EMA20 reclaim followed by a breakout impulse."""
     if len(candles) < 5 or atr <= 0:
         return False, 0
     cur = candles[-1]
