@@ -7,14 +7,13 @@ from __future__ import annotations
 
 import argparse
 import json
-from collections import Counter
 from pathlib import Path
 
 import pandas as pd
 
 from research.paper_parity_replay import load_dataset
 from research.strategy_v2_replay import _resample
-from strategy_v2 import _atr, _closes, _ema, _pullback_trigger, _relative_volume, _slope, _structure, generate_signal
+from strategy_v2 import _atr, _closes, _ema, _field, _pullback_trigger, _relative_volume, _slope, _structure, generate_signal
 
 REQUIRED_HISTORY = 50
 WINDOW = 60
@@ -33,7 +32,33 @@ def _empty_direction() -> dict:
         "failed_at": {"trend": 0, "structure": 0, "pullback_trigger": 0, "participation": 0, "btc_compatible": 0},
         "score_distribution": {str(i): 0 for i in range(7)},
         "independent_pass_rates": {},
+        "pullback_components": {"reclaim": 0, "impulse": 0, "depth": 0},
     }
+
+
+def _pullback_components(candles: list[dict], direction: str, atr: float, ema_fast: float) -> tuple[bool, bool, bool, float]:
+    if len(candles) < 5 or atr <= 0:
+        return False, False, False, 0.0
+    cur, prev = candles[-1], candles[-2]
+    close, high, low, op = (_field(cur, "close"), _field(cur, "high"), _field(cur, "low"), _field(cur, "open"))
+    pc, pl, ph = (_field(prev, "close"), _field(prev, "low"), _field(prev, "high"))
+    lows = [_field(c, "low") for c in candles[-5:-1]]
+    highs = [_field(c, "high") for c in candles[-5:-1]]
+    if None in (close, high, low, op, pc, pl, ph) or any(v is None for v in lows + highs):
+        return False, False, False, 0.0
+    body = abs(close - op)
+    if direction == "LONG":
+        pb = min(v for v in lows if v is not None)
+        reclaim = close > ema_fast and pc <= ema_fast
+        impulse = close > max(v for v in highs if v is not None) and body / atr >= 0.30 and close > op
+        depth = max(0.0, (ema_fast - pb) / atr)
+    else:
+        pb = max(v for v in highs if v is not None)
+        reclaim = close < ema_fast and pc >= ema_fast
+        impulse = close < min(v for v in lows if v is not None) and body / atr >= 0.30 and close < op
+        depth = max(0.0, (pb - ema_fast) / atr)
+    depth_ok = 0.15 <= depth <= 1.5
+    return reclaim, impulse, depth_ok, depth
 
 
 def _evaluate(c5: list[dict], c15: list[dict], c1: list[dict], btc1: list[dict] | None, direction: str) -> tuple[dict, int] | None:
@@ -49,7 +74,8 @@ def _evaluate(c5: list[dict], c15: list[dict], c1: list[dict], btc1: list[dict] 
     if None in (e1f, e1s, e15f, e15s, e5f, atr5, rv, s15, s1):
         return None
     structure, continuation = _structure(c15, direction)
-    trigger, _depth = _pullback_trigger(c5, direction, atr5, e5f)
+    trigger, depth = _pullback_trigger(c5, direction, atr5, e5f)
+    reclaim, impulse, depth_ok, _ = _pullback_components(c5, direction, atr5, e5f)
     trend = (e1f > e1s and e15f > e15s and s15 > 0 and s1 > 0) if direction == "LONG" else (e1f < e1s and e15f < e15s and s15 < 0 and s1 < 0)
     participation = rv >= 1.0
     btc_ok = True
@@ -60,7 +86,7 @@ def _evaluate(c5: list[dict], c15: list[dict], c1: list[dict], btc1: list[dict] 
             return None
         btc_ok = (bf >= bs) if direction == "LONG" else (bf < bs)
     flags = [trend, structure, continuation, trigger, participation, btc_ok]
-    return {"trend": trend, "structure": structure, "continuation": continuation, "pullback_trigger": trigger, "participation": participation, "btc_compatible": btc_ok}, sum(flags)
+    return {"trend": trend, "structure": structure, "continuation": continuation, "pullback_trigger": trigger, "participation": participation, "btc_compatible": btc_ok, "reclaim": reclaim, "impulse": impulse, "depth_ok": depth_ok, "depth_atr": depth}, sum(flags)
 
 
 def run_diagnostics(frames: dict[str, pd.DataFrame], stride: int = 1) -> dict:
@@ -101,10 +127,12 @@ def run_diagnostics(frames: dict[str, pd.DataFrame], stride: int = 1) -> dict:
                 for key in ("trend", "structure", "continuation", "pullback_trigger", "participation", "btc_compatible"):
                     if flags[key]:
                         d[key] += 1
+                for key, flag in (("reclaim", flags["reclaim"]), ("impulse", flags["impulse"]), ("depth", flags["depth_ok"])):
+                    if flag:
+                        d["pullback_components"][key] += 1
                 d["score_distribution"][str(score)] += 1
-                if all(flags.values()):
+                if all(flags[k] for k in ("trend", "structure", "continuation", "pullback_trigger", "participation", "btc_compatible")):
                     d["all_six"] += 1
-                # Sequential funnel: the first failed gate is the actionable bottleneck.
                 if not flags["trend"]:
                     d["failed_at"]["trend"] += 1
                 elif not flags["structure"]:
@@ -118,8 +146,8 @@ def run_diagnostics(frames: dict[str, pd.DataFrame], stride: int = 1) -> dict:
     for direction, d in result.items():
         eligible = d["eligible"]
         d["independent_pass_rates"] = {k: round(d[k] / eligible, 6) if eligible else 0.0 for k in ("trend", "structure", "continuation", "pullback_trigger", "participation", "btc_compatible")}
+        d["pullback_component_pass_rates"] = {k: round(v / eligible, 6) if eligible else 0.0 for k, v in d["pullback_components"].items()}
         d["all_six_rate"] = round(d["all_six"] / eligible, 6) if eligible else 0.0
-    # Independent parity check on the final condition: all six must imply a real V2 signal.
     parity_checks = 0
     parity_failures = 0
     for symbol, symbol_bars in bars.items():
