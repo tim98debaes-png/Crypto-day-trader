@@ -82,48 +82,41 @@ def _structure(candles: Sequence[Mapping[str, object]], direction: str) -> tuple
     l = [float(v) for v in ls if v is not None]
     if direction == "LONG":
         return h[-1] > h[-2] and l[-1] > l[-2], h[-1] > h[0] and l[-1] > l[0]
-    return h[-1] < h[-2] and l[-1] < l[-2], h[-1] < h[0] and l[-1] < l[0]
+    return h[-1] < h[-2] and l[-1] < l[-2], h[-1] < h[-2] and l[-1] < l[0]
 
 def _pullback_trigger(
     candles: Sequence[Mapping[str, object]], direction: str, atr: float, ema_fast: float
 ) -> tuple[bool, float]:
-    """Require a recent EMA20 reclaim followed by a breakout impulse."""
+    """Require the immediately preceding 5m bar to be on the pullback side of EMA20 and the current bar to reclaim it with a breakout impulse."""
     if len(candles) < 5 or atr <= 0:
         return False, 0
     cur = candles[-1]
+    prev = candles[-2]
     close = _field(cur, "close")
     high = _field(cur, "high")
     low = _field(cur, "low")
     op = _field(cur, "open")
-    if None in (close, high, low, op):
+    prev_close = _field(prev, "close")
+    if None in (close, high, low, op, prev_close):
         return False, 0
 
     prior = candles[-5:-1]
-    closes = [_field(c, "close") for c in prior]
     highs = [_field(c, "high") for c in prior]
     lows = [_field(c, "low") for c in prior]
-    if any(v is None for v in closes + highs + lows):
+    if any(v is None for v in highs + lows):
         return False, 0
-
-    close_values = [float(v) for v in closes if v is not None]
     high_values = [float(v) for v in highs if v is not None]
     low_values = [float(v) for v in lows if v is not None]
     body = abs(float(close) - float(op))
 
     if direction == "LONG":
-        reclaim = any(
-            close_values[i] <= ema_fast and close_values[i + 1] > ema_fast
-            for i in range(len(close_values) - 1)
-        )
+        reclaim = float(prev_close) <= ema_fast and float(close) > ema_fast
         impulse = float(close) > max(high_values) and body / atr >= 0.30 and float(close) > float(op)
         pb = min(low_values)
         depth = max(0, (ema_fast - pb) / atr)
     else:
-        reclaim = any(
-            close_values[i] >= ema_fast and close_values[i + 1] < ema_fast
-            for i in range(len(close_values) - 1)
-        )
-        impulse = float(close) < min(low_values) and body / atr >= 0.30 and float(close) < float(op)
+        reclaim = float(prev_close) >= ema_fast and float(close) < ema_fast
+        impulse = float(close) < min(high_values) and body / atr >= 0.30 and float(close) < float(op)
         pb = max(high_values)
         depth = max(0, (pb - ema_fast) / atr)
 
