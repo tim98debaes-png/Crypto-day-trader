@@ -59,7 +59,7 @@ jobs:
           --output strategy-v2-entry-diagnostics
       - name: Validate diagnostic report
         run: >-
-          python -c "import json; r=json.load(open('strategy-v2-entry-diagnostics/strategy_v2_entry_diagnostics.json')); assert r['status']=='EXECUTION_COMPLETE'; assert r['diagnostic_only'] is True; assert r['strategy']=='V2'; print(json.dumps(r, indent=2))"
+          python -c "import json; r=json.load(open('strategy-v2-entry-diagnostics/strategy_v2_entry_diagnostics.json')); assert r['status']=='EXECUTION_COMPLETE'; assert r['procedure']=='strategy_v2_entry_gate_diagnostics'; assert r['sampling']['required_mtf_history']==50; assert r['parity']['failures']==0; print(json.dumps(r, indent=2))"
       - name: Upload Strategy V2 entry diagnostics
         uses: actions/upload-artifact@v4
         with:
