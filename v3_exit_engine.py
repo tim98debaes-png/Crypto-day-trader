@@ -30,13 +30,22 @@ def adaptive_exit_policy(
     setup_score: float,
     regime: str,
     config: V3Config = V3Config(),
+    risk_distance: float | None = None,
 ) -> ExitDecision:
-    """Return HOLD, PARTIAL or CLOSE using current trade state only."""
+    """Return HOLD, PARTIAL or CLOSE using current trade state only.
+
+    ``stop_price`` is the current protective stop and may trail.  When
+    ``risk_distance`` is supplied, R is anchored to the original stop
+    distance so trailing a stop cannot silently change the profit threshold.
+    """
     if entry_price <= 0 or stop_price <= 0 or current_price <= 0:
         raise ValueError("prices must be positive")
-    risk = abs(entry_price - stop_price)
+    if risk_distance is None:
+        risk = abs(entry_price - stop_price)
+    else:
+        risk = float(risk_distance)
     if risk <= 0:
-        raise ValueError("stop must differ from entry")
+        raise ValueError("risk distance must be positive")
 
     if direction == "LONG":
         stopped = current_price <= stop_price
