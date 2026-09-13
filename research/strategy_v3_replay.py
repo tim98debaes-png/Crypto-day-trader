@@ -216,6 +216,7 @@ def run_v3(frames: dict[str, pd.DataFrame], config: ReplayConfig = ReplayConfig(
                         setup_score,
                         active_meta.get(symbol, {}).get("regime", "TRANSITION"),
                         v3,
+                        risk_distance=active_meta.get(symbol, {}).get("stop_distance"),
                     )
                     diagnostics["exit_policy_decisions"][decision.action] += 1
                     if decision.action == "PARTIAL":
