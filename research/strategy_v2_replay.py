@@ -33,7 +33,7 @@ def _volatility(history: deque[float]) -> float:
     return max((abs(values[i] / values[i - 1] - 1.0) * 100.0 for i in range(1, len(values)) if values[i - 1] > 0), default=0.0)
 
 
-def _signal_candidates(symbol, timestamp, bars, account, history, btc_bars, diagnostics):
+def _signal_candidates(symbol, timestamp, bars, account, history, btc_bars, diagnostics, short_edge_experiment=False):
     if symbol in account.positions or len(history[symbol]) < 20:
         return []
     if not RISK_CONFIG.volatility_floor_pct <= _volatility(history[symbol]) <= RISK_CONFIG.volatility_ceiling_pct:
@@ -46,15 +46,17 @@ def _signal_candidates(symbol, timestamp, bars, account, history, btc_bars, diag
     if min(len(c5), len(c15), len(c1)) < 50:
         diagnostics["insufficient_mtf"] += 1
         return []
-    signal = generate_signal(c5, c15, c1, btc1)
+    signal = generate_signal(c5, c15, c1, btc1, short_edge_experiment=short_edge_experiment)
     if signal is None:
         diagnostics["no_signal"] += 1
         return []
     diagnostics["signals"] += 1
+    if signal.reason == "v2_short_edge_price_near_fast_bounce":
+        diagnostics["short_edge_signals"] += 1
     return [{"symbol": symbol, "direction": signal.direction, "score": signal.score, "stop_distance": signal.stop_distance}]
 
 
-def run_v2(frames: dict[str, pd.DataFrame], config: ReplayConfig = ReplayConfig()) -> tuple[dict, dict]:
+def run_v2(frames: dict[str, pd.DataFrame], config: ReplayConfig = ReplayConfig(), short_edge_experiment: bool = False) -> tuple[dict, dict]:
     """Replay V2 using the established paper-account execution controls."""
     bars = {symbol: {"5m": _resample(frame, "5min"), "15m": _resample(frame, "15min"), "1h": _resample(frame, "1h")} for symbol, frame in frames.items()}
     btc_bars = bars["BTCUSDT"]
@@ -63,7 +65,7 @@ def run_v2(frames: dict[str, pd.DataFrame], config: ReplayConfig = ReplayConfig(
     cursor = {symbol: 0 for symbol in frames}
     pending = {}
     stats = _stats()
-    diagnostics = {"strategy": "V2", "signals": 0, "opened_trades": 0, "no_signal": 0, "insufficient_mtf": 0, "volatility_rejections": 0, "partials": 0, "partial_pnl": 0.0, "max_open_positions": 0, "exits": {"SL": 0, "TP": 0, "SIGNAL": 0, "TIME_STOP": 0}}
+    diagnostics = {"strategy": "V2-SHORT-EDGE" if short_edge_experiment else "V2", "signals": 0, "short_edge_signals": 0, "opened_trades": 0, "no_signal": 0, "insufficient_mtf": 0, "volatility_rejections": 0, "partials": 0, "partial_pnl": 0.0, "max_open_positions": 0, "exits": {"SL": 0, "TP": 0, "SIGNAL": 0, "TIME_STOP": 0}}
     curve = []
     timestamps = sorted(set().union(*(set(frame["timestamp"]) for frame in frames.values())))
     for timestamp in timestamps:
@@ -80,7 +82,7 @@ def run_v2(frames: dict[str, pd.DataFrame], config: ReplayConfig = ReplayConfig(
             if row is None or symbol in account.positions:
                 continue
             try:
-                account.open_position(symbol=symbol, direction=signal["direction"], price=float(row["open"]), stop_distance=signal["stop_distance"], rr=2.0, timestamp=str(timestamp), strategy_score=signal["score"], strategy_tier="V2")
+                account.open_position(symbol=symbol, direction=signal["direction"], price=float(row["open"]), stop_distance=signal["stop_distance"], rr=2.0, timestamp=str(timestamp), strategy_score=signal["score"], strategy_tier="V2-SHORT-EDGE" if short_edge_experiment else "V2")
                 diagnostics["opened_trades"] += 1
             except RuntimeError:
                 pass
@@ -99,7 +101,7 @@ def run_v2(frames: dict[str, pd.DataFrame], config: ReplayConfig = ReplayConfig(
                 diagnostics["exits"]["TIME_STOP"] += 1
         candidates = []
         for symbol in rows:
-            candidates.extend(_signal_candidates(symbol, timestamp, bars, account, history, btc_bars, diagnostics))
+            candidates.extend(_signal_candidates(symbol, timestamp, bars, account, history, btc_bars, diagnostics, short_edge_experiment=short_edge_experiment))
         candidates.sort(key=lambda x: (-x["score"], x["symbol"], x["direction"]))
         for candidate in candidates:
             if len(account.positions) + len(pending) >= RISK_CONFIG.max_open_positions:
@@ -125,9 +127,10 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--data", required=True)
     parser.add_argument("--output", required=True)
+    parser.add_argument("--mode", choices=("baseline", "short_edge"), default="baseline")
     args = parser.parse_args()
-    result, diagnostics = run_v2(load_dataset(Path(args.data)))
-    report = {"schema_version": 4, "status": "EXECUTION_COMPLETE", "procedure": "strategy_v2_event_replay", "data_interval": "1m", "strategy": "V2", "execution": {"capital": 1000.0, "risk_pct": 0.5, "fee_pct": 0.1, "slippage_pct": 0.02, "max_daily_loss_pct": 3.0}, "result": result, "diagnostics": diagnostics, "robustness_policy": "unchanged"}
+    result, diagnostics = run_v2(load_dataset(Path(args.data)), short_edge_experiment=args.mode == "short_edge")
+    report = {"schema_version": 5, "status": "EXECUTION_COMPLETE", "procedure": "strategy_v2_event_replay", "data_interval": "1m", "strategy": diagnostics["strategy"], "mode": args.mode, "execution": {"capital": 1000.0, "risk_pct": 0.5, "fee_pct": 0.1, "slippage_pct": 0.02, "max_daily_loss_pct": 3.0}, "result": result, "diagnostics": diagnostics, "robustness_policy": "unchanged"}
     output = Path(args.output)
     output.mkdir(parents=True, exist_ok=True)
     (output / "strategy_v2_report.json").write_text(json.dumps(report, indent=2, default=str) + "\n", encoding="utf-8")
