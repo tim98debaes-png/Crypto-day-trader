@@ -44,3 +44,6 @@ def test_v3_replay_is_deterministic_and_schema_safe():
     assert diag_a["max_open_positions"] <= 2
     assert diag_a["strategy"] == "V3"
     assert "bootstrap_monte_carlo" in diag_a
+    assert "trade_forensics" in diag_a
+    assert "trade_forensics_records" in diag_a
+    assert diag_a["trade_forensics"]["trades"] == len(diag_a["trade_forensics_records"])
