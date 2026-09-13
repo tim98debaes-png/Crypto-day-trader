@@ -17,6 +17,6 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt pytest
       - name: Compile V3 modules
-        run: python -m py_compile strategy_v3.py v3_portfolio_risk.py v3_trade_forensics.py v3_validation.py research/strategy_v3_replay.py
+        run: python -m py_compile strategy_v3.py v3_portfolio_risk.py v3_trade_forensics.py v3_validation.py v3_exit_engine.py research/strategy_v3_replay.py
       - name: Run V3 framework and replay tests
-        run: python -m pytest -q tests/test_strategy_v3_framework.py tests/test_strategy_v3_replay.py
+        run: python -m pytest -q tests/test_strategy_v3_framework.py tests/test_strategy_v3_replay.py tests/test_v3_exit_engine.py
