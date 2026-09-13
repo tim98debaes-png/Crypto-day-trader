@@ -1,0 +1,20 @@
+name: Strategy V3 framework
+
+on:
+  push:
+    branches: [strategy-v3-framework-2026-09-13]
+  pull_request:
+    branches: [main]
+
+jobs:
+  framework-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run V3 framework tests
+        run: pytest -q tests/test_strategy_v3_framework.py
