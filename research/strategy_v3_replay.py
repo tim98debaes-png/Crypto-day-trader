@@ -17,7 +17,8 @@ from paper_engine import PaperAccount
 from research.paper_parity_replay import ReplayConfig, _record, _stats, _summary, load_dataset
 from research.strategy_v2_metrics import build_metrics
 from research.strategy_v2_monte_carlo import bootstrap_monte_carlo
-from strategy_v3 import V3Config, _atr, score_setup, select_setup, should_exit, position_risk_pct
+from strategy_v3 import V3Config, _atr, score_setup, select_setup, position_risk_pct
+from v3_exit_engine import adaptive_exit_policy
 from v3_portfolio_risk import PortfolioSnapshot, admit
 from v3_trade_forensics import analyze_trade, summarize as summarize_forensics, to_dicts
 
@@ -113,7 +114,9 @@ def run_v3(frames: dict[str, pd.DataFrame], config: ReplayConfig = ReplayConfig(
         "partials": 0,
         "partial_pnl": 0.0,
         "max_open_positions": 0,
-        "exits": {"SL": 0, "TP": 0, "SIGNAL": 0, "TIME_STOP": 0},
+        "exits": {"SL": 0, "TP": 0, "SIGNAL": 0, "TIME_STOP": 0, "ADAPTIVE_PARTIAL": 0, "ADAPTIVE_TIME_STOP": 0, "ADAPTIVE_CLOSE": 0},
+        "exit_policy_decisions": defaultdict(int),
+        "regime_trade_counts": defaultdict(int),
     }
     curve = []
     active_paths: dict[str, list[float]] = {}
@@ -121,25 +124,25 @@ def run_v3(frames: dict[str, pd.DataFrame], config: ReplayConfig = ReplayConfig(
     forensic_records = []
 
     def record_close(symbol: str, exit_price: float, reason: str, timestamp: str) -> None:
-        position = account.positions.get(symbol)
-        # PaperAccount removes the position during close, so the metadata is
-        # captured before the call by the caller and forensic state is removed
-        # immediately after the close event is observed.
         if symbol not in active_meta:
             return
         meta = active_meta[symbol]
         path = active_paths.get(symbol, [])
-        if path:
-            forensic_records.append(
-                analyze_trade(
-                    meta["direction"],
-                    meta["entry"],
-                    exit_price,
-                    meta["stop_distance"],
-                    path,
-                    reason,
-                )
+        if path and (not path or path[-1] != exit_price):
+            path = [*path, exit_price]
+        elif path:
+            path = list(path)
+        forensic_records.append(
+            analyze_trade(
+                meta["direction"],
+                meta["entry"],
+                exit_price,
+                meta["stop_distance"],
+                path,
+                reason,
             )
+        )
+        diagnostics["regime_trade_counts"][meta["regime"]] += 1
         active_meta.pop(symbol, None)
         active_paths.pop(symbol, None)
 
@@ -203,15 +206,30 @@ def run_v3(frames: dict[str, pd.DataFrame], config: ReplayConfig = ReplayConfig(
                     continue
                 setup_score = float(next((e.get("strategy_score", 0) for e in reversed(account.audit_log) if e.get("event") == "OPEN" and e.get("symbol") == symbol), 0)) / 100.0
                 bars_open = int(account.position_age_minutes(symbol, str(timestamp)) / 5)
-                exit_now, reason = should_exit(position.direction, position.entry_price, float(row["close"]), stop, atr, bars_open, setup_score, v3)
-                if exit_now and reason == "PARTIAL_OR_REASSESS" and not position.partial_taken:
-                    pnl = account.take_partial_profit(symbol, float(row["close"]), str(timestamp))
-                    diagnostics["partials"] += 1
-                    diagnostics["partial_pnl"] += pnl
-                elif exit_now and reason == "TIME_STOP":
-                    _record(stats, account.close_position(float(row["close"]), "TIME_STOP", str(timestamp), symbol=symbol, trigger_price=float(row["close"])))
-                    diagnostics["exits"]["TIME_STOP"] += 1
-                    record_close(symbol, float(row["close"]), "TIME_STOP", str(timestamp))
+                if atr > 0:
+                    decision = adaptive_exit_policy(
+                        position.direction,
+                        position.entry_price,
+                        float(row["close"]),
+                        stop,
+                        bars_open,
+                        setup_score,
+                        active_meta.get(symbol, {}).get("regime", "TRANSITION"),
+                        v3,
+                    )
+                    diagnostics["exit_policy_decisions"][decision.action] += 1
+                    if decision.action == "PARTIAL":
+                        reason = "ADAPTIVE_PARTIAL"
+                        if not position.partial_taken:
+                            pnl = account.take_partial_profit(symbol, float(row["close"]), str(timestamp))
+                            diagnostics["partials"] += 1
+                            diagnostics["partial_pnl"] += pnl
+                    elif decision.action == "CLOSE":
+                        reason = decision.reason
+                        _record(stats, account.close_position(float(row["close"]), reason, str(timestamp), symbol=symbol, trigger_price=float(row["close"])))
+                        diagnostics["exits"][reason] += 1
+                        record_close(symbol, float(row["close"]), reason, str(timestamp))
+                        continue
 
         for symbol, row in rows.items():
             position = account.positions.get(symbol)
@@ -236,12 +254,10 @@ def run_v3(frames: dict[str, pd.DataFrame], config: ReplayConfig = ReplayConfig(
         curve.append(account.equity())
 
     diagnostics["portfolio_rejections"] = dict(diagnostics["portfolio_rejections"])
+    diagnostics["exit_policy_decisions"] = dict(diagnostics["exit_policy_decisions"])
+    diagnostics["regime_trade_counts"] = dict(diagnostics["regime_trade_counts"])
     diagnostics["trade_forensics"] = summarize_forensics(forensic_records)
     diagnostics["trade_forensics_records"] = to_dicts(forensic_records)
-    diagnostics["regime_trade_counts"] = {
-        regime: sum(1 for symbol in active_meta.values() if symbol.get("regime") == regime)
-        for regime in sorted({m.get("regime") for m in active_meta.values()})
-    }
     diagnostics["robustness_metrics"] = build_metrics(curve, account.audit_log)
     diagnostics["bootstrap_monte_carlo"] = bootstrap_monte_carlo(account.audit_log, initial_capital=config.capital, simulations=1000, seed=42)
     return _summary(account, stats, curve), diagnostics
