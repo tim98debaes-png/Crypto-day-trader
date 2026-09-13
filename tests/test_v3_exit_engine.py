@@ -29,8 +29,18 @@ def test_long_and_short_stop_logic_are_directional():
     assert adaptive_exit_policy("SHORT", 100, 102, 101, 1, 0.70, "RANGE").reason == "STOP"
 
 
+def test_initial_risk_anchor_survives_trailing_stop():
+    decision = adaptive_exit_policy(
+        "LONG", 100, 101.0, 100.5, 10, 0.70, "RANGE", risk_distance=2.0
+    )
+    assert decision.r_multiple == pytest.approx(0.5)
+    assert decision.action == "HOLD"
+
+
 def test_invalid_inputs_rejected():
     with pytest.raises(ValueError):
         adaptive_exit_policy("LONG", 0, 100, 99, 1, 0.7, "RANGE")
     with pytest.raises(ValueError):
         adaptive_exit_policy("FLAT", 100, 101, 99, 1, 0.7, "RANGE")
+    with pytest.raises(ValueError):
+        adaptive_exit_policy("LONG", 100, 101, 99, 1, 0.7, "RANGE", risk_distance=0)
