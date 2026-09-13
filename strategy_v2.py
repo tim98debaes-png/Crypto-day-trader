@@ -122,11 +122,32 @@ def _pullback_trigger(
 
     return reclaim and impulse and 0.15 <= depth <= 1.5, depth
 
+def _short_edge_trigger(candles: Sequence[Mapping[str, object]], atr: float, ema_fast: float) -> tuple[bool, float]:
+    """Controlled discovery gate: short setup near EMA20 with a bearish rejection/bounce.
+
+    Only completed 5m candles are supplied by the replay. No future data is used.
+    """
+    if len(candles) < 2 or atr <= 0:
+        return False, 0
+    cur, prev = candles[-1], candles[-2]
+    close = _field(cur, "close")
+    op = _field(cur, "open")
+    prev_high = _field(prev, "high")
+    cur_high = _field(cur, "high")
+    if None in (close, op, prev_high, cur_high):
+        return False, 0
+    distance = abs(float(close) - ema_fast) / atr
+    price_near_fast = distance <= 0.35
+    bounce = float(prev_high) >= ema_fast and float(close) < ema_fast and float(close) < float(op)
+    depth = max(0.0, (max(float(prev_high), float(cur_high)) - ema_fast) / atr)
+    return price_near_fast and bounce, depth
+
 def generate_signal(
     candles_5m: Sequence[Mapping[str, object]],
     candles_15m: Sequence[Mapping[str, object]],
     candles_1h: Sequence[Mapping[str, object]],
     btc_1h: Sequence[Mapping[str, object]] | None = None,
+    short_edge_experiment: bool = False,
 ) -> StrategyV2Signal | None:
     if min(len(candles_5m), len(candles_15m), len(candles_1h)) < 50:
         return None
@@ -153,11 +174,14 @@ def generate_signal(
         trend = (e1f > e1s and e15f > e15s and s15 > 0 and s1 > 0) if direction == "LONG" else (e1f < e1s and e15f < e15s and s15 < 0 and s1 < 0)
         structure, continuation = _structure(candles_15m, direction)
         trigger, depth = _pullback_trigger(candles_5m, direction, a5, e5f)
+        if direction == "SHORT" and short_edge_experiment:
+            trigger, depth = _short_edge_trigger(candles_5m, a5, e5f)
         participation = rv >= 1
         btc_ok = bd is None or bd == direction
         score = sum((trend, structure, continuation, trigger, participation, btc_ok))
         if score < 6:
             continue
         price = c5[-1]
-        candidates.append(StrategyV2Signal(direction, score, "v2_trend_pullback_continuation", price, max(a5 * 1.5, price * 0.003), {"trend": trend, "structure": structure, "continuation": continuation, "trigger": trigger, "participation": participation, "btc_ok": btc_ok, "pullback_depth_atr": depth, "relative_volume": rv, "slope_15m": s15, "slope_1h": s1}))
+        reason = "v2_short_edge_price_near_fast_bounce" if direction == "SHORT" and short_edge_experiment else "v2_trend_pullback_continuation"
+        candidates.append(StrategyV2Signal(direction, score, reason, price, max(a5 * 1.5, price * 0.003), {"trend": trend, "structure": structure, "continuation": continuation, "trigger": trigger, "participation": participation, "btc_ok": btc_ok, "pullback_depth_atr": depth, "relative_volume": rv, "slope_15m": s15, "slope_1h": s1}))
     return max(candidates, key=lambda x: x.score) if candidates else None
