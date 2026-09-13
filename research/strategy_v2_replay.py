@@ -1,0 +1,141 @@
+"""Event-driven 1m replay for the independent Strategy V2 signal engine."""
+from __future__ import annotations
+
+import argparse
+import json
+from collections import deque
+from pathlib import Path
+
+import pandas as pd
+
+from paper_engine import PaperAccount
+from research.paper_parity_replay import ReplayConfig, _manage_position, _record, _stats, _summary, load_dataset
+from research.strategy_v2_metrics import build_metrics
+from research.strategy_v2_monte_carlo import bootstrap_monte_carlo, trade_order_monte_carlo
+from strategy_risk_controls import RISK_CONFIG, exceeds_correlation_limit, sector_position_count
+from strategy_v2 import generate_signal
+
+
+def _resample(frame: pd.DataFrame, rule: str) -> pd.DataFrame:
+    f = frame.set_index("timestamp")[["open", "high", "low", "close", "volume"]]
+    return f.resample(rule, label="left", closed="left").agg({"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"}).dropna().reset_index()
+
+
+def _completed(series: pd.DataFrame, timestamp: pd.Timestamp, count: int = 60) -> list[dict]:
+    """Return only fully completed MTF bars strictly before the decision time."""
+    return series[series["timestamp"] < timestamp].tail(count).to_dict("records")
+
+
+def _volatility(history: deque[float]) -> float:
+    values = list(history)
+    if len(values) < 2:
+        return 0.0
+    return max((abs(values[i] / values[i - 1] - 1.0) * 100.0 for i in range(1, len(values)) if values[i - 1] > 0), default=0.0)
+
+
+def _signal_candidates(symbol, timestamp, bars, account, history, btc_bars, diagnostics, short_edge_experiment=False):
+    if symbol in account.positions or len(history[symbol]) < 20:
+        return []
+    if not RISK_CONFIG.volatility_floor_pct <= _volatility(history[symbol]) <= RISK_CONFIG.volatility_ceiling_pct:
+        diagnostics["volatility_rejections"] += 1
+        return []
+    c5 = _completed(bars[symbol]["5m"], timestamp)
+    c15 = _completed(bars[symbol]["15m"], timestamp)
+    c1 = _completed(bars[symbol]["1h"], timestamp)
+    btc1 = _completed(btc_bars["1h"], timestamp)
+    if min(len(c5), len(c15), len(c1)) < 50:
+        diagnostics["insufficient_mtf"] += 1
+        return []
+    signal = generate_signal(c5, c15, c1, btc1, short_edge_experiment=short_edge_experiment)
+    if signal is None:
+        diagnostics["no_signal"] += 1
+        return []
+    diagnostics["signals"] += 1
+    if signal.reason == "v2_short_edge_price_near_fast_bounce":
+        diagnostics["short_edge_signals"] += 1
+    return [{"symbol": symbol, "direction": signal.direction, "score": signal.score, "stop_distance": signal.stop_distance}]
+
+
+def run_v2(frames: dict[str, pd.DataFrame], config: ReplayConfig = ReplayConfig(), short_edge_experiment: bool = False) -> tuple[dict, dict]:
+    """Replay V2 using the established paper-account execution controls."""
+    bars = {symbol: {"5m": _resample(frame, "5min"), "15m": _resample(frame, "15min"), "1h": _resample(frame, "1h")} for symbol, frame in frames.items()}
+    btc_bars = bars["BTCUSDT"]
+    account = PaperAccount(capital=config.capital, cash=config.capital, risk_pct=config.risk_pct, fee_pct=config.fee_pct, slippage_pct=config.slippage_pct, max_daily_loss_pct=config.max_daily_loss_pct)
+    history = {symbol: deque(maxlen=20) for symbol in frames}
+    cursor = {symbol: 0 for symbol in frames}
+    pending = {}
+    stats = _stats()
+    diagnostics = {"strategy": "V2-SHORT-EDGE" if short_edge_experiment else "V2", "signals": 0, "short_edge_signals": 0, "opened_trades": 0, "no_signal": 0, "insufficient_mtf": 0, "volatility_rejections": 0, "partials": 0, "partial_pnl": 0.0, "max_open_positions": 0, "exits": {"SL": 0, "TP": 0, "SIGNAL": 0, "TIME_STOP": 0}}
+    curve = []
+    timestamps = sorted(set().union(*(set(frame["timestamp"]) for frame in frames.values())))
+    for timestamp in timestamps:
+        rows = {}
+        for symbol, frame in frames.items():
+            i = cursor[symbol]
+            while i < len(frame) and frame.iloc[i]["timestamp"] < timestamp:
+                i += 1
+            if i < len(frame) and frame.iloc[i]["timestamp"] == timestamp:
+                rows[symbol] = frame.iloc[i]
+                cursor[symbol] = i + 1
+        for symbol, signal in list(pending.items()):
+            row = rows.get(symbol)
+            if row is None or symbol in account.positions:
+                continue
+            try:
+                account.open_position(symbol=symbol, direction=signal["direction"], price=float(row["open"]), stop_distance=signal["stop_distance"], rr=2.0, timestamp=str(timestamp), strategy_score=signal["score"], strategy_tier="V2-SHORT-EDGE" if short_edge_experiment else "V2")
+                diagnostics["opened_trades"] += 1
+            except RuntimeError:
+                pass
+            del pending[symbol]
+        for symbol, row in rows.items():
+            if symbol in account.positions:
+                account.last_prices[symbol] = float(row["open"])
+                _manage_position(account, row, history[symbol], stats, diagnostics)
+        for symbol, row in rows.items():
+            history[symbol].append(float(row["close"]))
+            account.last_prices[symbol] = float(row["close"])
+        for symbol, row in rows.items():
+            position = account.positions.get(symbol)
+            if position is not None and account.position_age_minutes(symbol, str(timestamp)) >= RISK_CONFIG.time_stop_minutes:
+                _record(stats, account.close_position(float(row["close"]), "TIME_STOP", str(timestamp), symbol=symbol, trigger_price=float(row["close"])))
+                diagnostics["exits"]["TIME_STOP"] += 1
+        candidates = []
+        for symbol in rows:
+            candidates.extend(_signal_candidates(symbol, timestamp, bars, account, history, btc_bars, diagnostics, short_edge_experiment=short_edge_experiment))
+        candidates.sort(key=lambda x: (-x["score"], x["symbol"], x["direction"]))
+        for candidate in candidates:
+            if len(account.positions) + len(pending) >= RISK_CONFIG.max_open_positions:
+                break
+            symbol = candidate["symbol"]
+            if symbol in account.positions or symbol in pending:
+                continue
+            open_symbols = tuple(account.positions.keys())
+            if sector_position_count(symbol, open_symbols) >= RISK_CONFIG.max_positions_per_sector:
+                continue
+            if exceeds_correlation_limit(symbol, open_symbols, history, threshold=RISK_CONFIG.max_pairwise_correlation, window=RISK_CONFIG.correlation_window):
+                continue
+            pending[symbol] = candidate
+        diagnostics["max_open_positions"] = max(diagnostics["max_open_positions"], len(account.positions))
+        curve.append(account.equity())
+    diagnostics["robustness_metrics"] = build_metrics(curve, account.audit_log)
+    diagnostics["trade_order_monte_carlo"] = trade_order_monte_carlo(account.audit_log, initial_capital=config.capital, simulations=500, seed=42)
+    diagnostics["bootstrap_monte_carlo"] = bootstrap_monte_carlo(account.audit_log, initial_capital=config.capital, simulations=1000, seed=42)
+    return _summary(account, stats, curve), diagnostics
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--data", required=True)
+    parser.add_argument("--output", required=True)
+    parser.add_argument("--mode", choices=("baseline", "short_edge"), default="baseline")
+    args = parser.parse_args()
+    result, diagnostics = run_v2(load_dataset(Path(args.data)), short_edge_experiment=args.mode == "short_edge")
+    report = {"schema_version": 5, "status": "EXECUTION_COMPLETE", "procedure": "strategy_v2_event_replay", "data_interval": "1m", "strategy": diagnostics["strategy"], "mode": args.mode, "execution": {"capital": 1000.0, "risk_pct": 0.5, "fee_pct": 0.1, "slippage_pct": 0.02, "max_daily_loss_pct": 3.0}, "result": result, "diagnostics": diagnostics, "robustness_policy": "unchanged"}
+    output = Path(args.output)
+    output.mkdir(parents=True, exist_ok=True)
+    (output / "strategy_v2_report.json").write_text(json.dumps(report, indent=2, default=str) + "\n", encoding="utf-8")
+    print(json.dumps(report, indent=2, default=str))
+
+
+if __name__ == "__main__":
+    main()
