@@ -24,7 +24,7 @@ jobs:
   historical-benchmark:
     name: V3 vs locked V2 historical benchmark
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 210
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -52,11 +52,12 @@ jobs:
       - name: Validate dataset
         run: >-
           python -c "import json; m=json.load(open('data/historical/manifest.json')); assert m['status']=='DATASET_READY'; assert m['interval']=='1m'; assert len(m['symbols'])==10; assert all(x['candles']>10000 for x in m['files']); print(json.dumps(m, indent=2))"
-      - name: Run V3 vs V2 benchmark and OOS slices
+      - name: Run V3 vs V2 benchmark and 3 OOS slices
         run: >-
           python -m research.strategy_v3_benchmark
           --data data/historical
           --output strategy-v3-benchmark
+          --folds 3
       - name: Validate benchmark report
         run: >-
           python -c "import json, math; r=json.load(open('strategy-v3-benchmark/strategy_v3_benchmark.json')); assert r['status']=='EXECUTION_COMPLETE'; assert r['baseline']=='V2_LOCKED'; assert len(r['oos_fixed_parameter_slices'])>=3; assert all(math.isfinite(float(r['v3'][k])) for k in ('return_pct','max_drawdown_pct','profit_factor','expectancy_per_trade','sharpe_ratio','sortino_ratio','calmar_ratio')); assert 'promotion_gate' in r; print(json.dumps({'v2':r['v2'],'v3':r['v3'],'delta':r['v3_minus_v2'],'promotion_gate':r['promotion_gate'],'oos_folds':len(r['oos_fixed_parameter_slices'])}, indent=2))"
