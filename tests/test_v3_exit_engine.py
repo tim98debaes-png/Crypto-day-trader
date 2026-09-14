@@ -37,6 +37,25 @@ def test_initial_risk_anchor_survives_trailing_stop():
     assert decision.action == "HOLD"
 
 
+def test_partial_is_only_requested_once():
+    first = adaptive_exit_policy("LONG", 100, 102, 99, 10, 0.70, "RANGE")
+    runner = adaptive_exit_policy("LONG", 100, 102, 100, 11, 0.70, "RANGE", partial_taken=True)
+    assert first.action == "PARTIAL"
+    assert runner.action == "HOLD"
+
+
+def test_runner_closes_on_deep_retracement_after_partial():
+    decision = adaptive_exit_policy("LONG", 100, 100.1, 100, 10, 0.70, "RANGE", partial_taken=True)
+    assert decision.action == "CLOSE"
+    assert decision.reason == "ADAPTIVE_CLOSE"
+
+
+def test_stale_loser_closes_before_full_time_stop():
+    decision = adaptive_exit_policy("LONG", 100, 99.5, 98, 40, 0.70, "RANGE")
+    assert decision.action == "CLOSE"
+    assert decision.reason == "ADAPTIVE_TIME_STOP"
+
+
 def test_invalid_inputs_rejected():
     with pytest.raises(ValueError):
         adaptive_exit_policy("LONG", 0, 100, 99, 1, 0.7, "RANGE")
@@ -44,3 +63,5 @@ def test_invalid_inputs_rejected():
         adaptive_exit_policy("FLAT", 100, 101, 99, 1, 0.7, "RANGE")
     with pytest.raises(ValueError):
         adaptive_exit_policy("LONG", 100, 101, 99, 1, 0.7, "RANGE", risk_distance=0)
+    with pytest.raises(ValueError):
+        adaptive_exit_policy("LONG", 100, 101, 99, -1, 0.7, "RANGE")
