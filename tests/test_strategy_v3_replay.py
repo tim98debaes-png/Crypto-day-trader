@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 
 import pandas as pd
 
-from research.strategy_v3_replay import _completed, run_v3
+from research.strategy_v3_replay import _completed, _trail_multiple, run_v3
 from research.paper_parity_replay import ReplayConfig
 from strategy_v3 import V3Config
 
@@ -31,6 +31,14 @@ def test_completed_excludes_decision_bar_and_future_bars():
     assert result
     assert all(pd.Timestamp(row["timestamp"]) < decision for row in result)
     assert max(pd.Timestamp(row["timestamp"]) for row in result) < decision
+
+
+def test_staged_trailing_is_wider_before_partial_and_tighter_after():
+    pre = _trail_multiple("TREND_UP", False, 0.70)
+    post = _trail_multiple("TREND_UP", True, 0.70)
+    assert pre > post
+    assert _trail_multiple("RANGE", True, 0.70) < post
+    assert _trail_multiple("HIGH_VOL", False, 0.70) > _trail_multiple("RANGE", False, 0.70)
 
 
 def test_v3_replay_is_deterministic_and_schema_safe():
