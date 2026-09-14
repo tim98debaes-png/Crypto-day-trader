@@ -65,9 +65,12 @@ def adaptive_exit_policy(direction: str, entry_price: float, current_price: floa
             return ExitDecision("CLOSE", "ADAPTIVE_TIME_STOP", r, threshold, runner, time_stop, trail)
         return ExitDecision("HOLD", "HOLD", r, threshold, runner, time_stop, trail)
 
+    # After the partial fill the remaining runner is protected. A fresh
+    # positive excursion may hit the runner target; a return to the entry
+    # area after at least a few bars is treated as a meaningful retracement.
     if r >= runner:
         return ExitDecision("CLOSE", "ADAPTIVE_TARGET", r, threshold, runner, time_stop, trail)
-    if r <= 0.0 and bars_open >= 4:
+    if bars_open >= 4 and r <= 0.10:
         return ExitDecision("CLOSE", "ADAPTIVE_CLOSE", r, threshold, runner, time_stop, trail)
     if bars_open >= time_stop and r < 0.75:
         return ExitDecision("CLOSE", "ADAPTIVE_TIME_STOP", r, threshold, runner, time_stop, trail)
