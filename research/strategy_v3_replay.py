@@ -1,9 +1,4 @@
-"""Event-driven replay for the Strategy V3 decision layer.
-
-The replay intentionally reuses the existing PaperAccount execution engine so
-V3 is tested with the same fees, slippage, partials, trailing stops and
-portfolio safeguards that will later be used by paper/live execution.
-"""
+"""Event-driven replay for the Strategy V3 decision layer."""
 from __future__ import annotations
 
 import argparse
@@ -114,6 +109,7 @@ def run_v3(frames: dict[str, pd.DataFrame], config: ReplayConfig = ReplayConfig(
         "partials": 0,
         "partial_pnl": 0.0,
         "max_open_positions": 0,
+        "trailing_stop_updates": 0,
         "exits": {"SL": 0, "TP": 0, "SIGNAL": 0, "TIME_STOP": 0, "ADAPTIVE_PARTIAL": 0, "ADAPTIVE_TIME_STOP": 0, "ADAPTIVE_CLOSE": 0},
         "exit_policy_decisions": defaultdict(int),
         "regime_trade_counts": defaultdict(int),
@@ -128,19 +124,12 @@ def run_v3(frames: dict[str, pd.DataFrame], config: ReplayConfig = ReplayConfig(
             return
         meta = active_meta[symbol]
         path = active_paths.get(symbol, [])
-        if path and (not path or path[-1] != exit_price):
+        if path and path[-1] != exit_price:
             path = [*path, exit_price]
-        elif path:
+        else:
             path = list(path)
         forensic_records.append(
-            analyze_trade(
-                meta["direction"],
-                meta["entry"],
-                exit_price,
-                meta["stop_distance"],
-                path,
-                reason,
-            )
+            analyze_trade(meta["direction"], meta["entry"], exit_price, meta["stop_distance"], path, reason)
         )
         diagnostics["regime_trade_counts"][meta["regime"]] += 1
         active_meta.pop(symbol, None)
@@ -190,47 +179,61 @@ def run_v3(frames: dict[str, pd.DataFrame], config: ReplayConfig = ReplayConfig(
         for symbol, row in rows.items():
             histories[symbol].append(float(row["close"]))
             account.last_prices[symbol] = float(row["close"])
-            if symbol in account.positions:
-                active_paths.setdefault(symbol, [account.positions[symbol].entry_price]).append(float(row["close"]))
-                c5 = _completed(bars[symbol]["5m"], timestamp)
-                atr = _atr(c5) or atr_by_symbol[symbol]
-                atr_by_symbol[symbol] = atr
-                position = account.positions[symbol]
-                if atr > 0:
-                    account.update_trailing_stop(symbol, float(row["close"]), atr)
-                stop = position.stop_price
-                if (position.direction == "LONG" and float(row["low"]) <= stop) or (position.direction == "SHORT" and float(row["high"]) >= stop):
-                    _record(stats, account.close_position(stop, "SL", str(timestamp), symbol=symbol, trigger_price=stop))
-                    diagnostics["exits"]["SL"] += 1
-                    record_close(symbol, stop, "SL", str(timestamp))
+            if symbol not in account.positions:
+                continue
+
+            position = account.positions[symbol]
+            close_price = float(row["close"])
+            active_paths.setdefault(symbol, [position.entry_price]).append(close_price)
+            c5 = _completed(bars[symbol]["5m"], timestamp)
+            atr = _atr(c5) or atr_by_symbol[symbol]
+            atr_by_symbol[symbol] = atr
+
+            # IMPORTANT: use the stop that existed before this bar. Updating a
+            # trailing stop from the current close and then testing that new
+            # stop against the same bar's low/high would introduce intrabar
+            # lookahead and artificially tighten exits.
+            stop = position.stop_price
+            if (position.direction == "LONG" and float(row["low"]) <= stop) or (position.direction == "SHORT" and float(row["high"]) >= stop):
+                _record(stats, account.close_position(stop, "SL", str(timestamp), symbol=symbol, trigger_price=stop))
+                diagnostics["exits"]["SL"] += 1
+                record_close(symbol, stop, "SL", str(timestamp))
+                continue
+
+            setup_score = float(next((e.get("strategy_score", 0) for e in reversed(account.audit_log) if e.get("event") == "OPEN" and e.get("symbol") == symbol), 0)) / 100.0
+            bars_open = int(account.position_age_minutes(symbol, str(timestamp)) / 5)
+            if atr > 0:
+                decision = adaptive_exit_policy(
+                    position.direction,
+                    position.entry_price,
+                    close_price,
+                    stop,
+                    bars_open,
+                    setup_score,
+                    active_meta.get(symbol, {}).get("regime", "TRANSITION"),
+                    v3,
+                    risk_distance=active_meta.get(symbol, {}).get("stop_distance"),
+                    partial_taken=position.partial_taken,
+                )
+                diagnostics["exit_policy_decisions"][decision.action] += 1
+                if decision.action == "PARTIAL" and not position.partial_taken:
+                    pnl = account.take_partial_profit(symbol, close_price, str(timestamp))
+                    diagnostics["partials"] += 1
+                    diagnostics["partial_pnl"] += pnl
+                elif decision.action == "CLOSE":
+                    reason = decision.reason
+                    _record(stats, account.close_position(close_price, reason, str(timestamp), symbol=symbol, trigger_price=close_price))
+                    diagnostics["exits"][reason] += 1
+                    record_close(symbol, close_price, reason, str(timestamp))
                     continue
-                setup_score = float(next((e.get("strategy_score", 0) for e in reversed(account.audit_log) if e.get("event") == "OPEN" and e.get("symbol") == symbol), 0)) / 100.0
-                bars_open = int(account.position_age_minutes(symbol, str(timestamp)) / 5)
-                if atr > 0:
-                    decision = adaptive_exit_policy(
-                        position.direction,
-                        position.entry_price,
-                        float(row["close"]),
-                        stop,
-                        bars_open,
-                        setup_score,
-                        active_meta.get(symbol, {}).get("regime", "TRANSITION"),
-                        v3,
-                        risk_distance=active_meta.get(symbol, {}).get("stop_distance"),
-                    )
-                    diagnostics["exit_policy_decisions"][decision.action] += 1
-                    if decision.action == "PARTIAL":
-                        reason = "ADAPTIVE_PARTIAL"
-                        if not position.partial_taken:
-                            pnl = account.take_partial_profit(symbol, float(row["close"]), str(timestamp))
-                            diagnostics["partials"] += 1
-                            diagnostics["partial_pnl"] += pnl
-                    elif decision.action == "CLOSE":
-                        reason = decision.reason
-                        _record(stats, account.close_position(float(row["close"]), reason, str(timestamp), symbol=symbol, trigger_price=float(row["close"])))
-                        diagnostics["exits"][reason] += 1
-                        record_close(symbol, float(row["close"]), reason, str(timestamp))
-                        continue
+
+            # Trail only after all decisions for the completed bar have been
+            # made. The new stop becomes active from the next bar onward.
+            if symbol in account.positions and atr > 0:
+                old_stop = account.positions[symbol].stop_price
+                new_stop = account.update_trailing_stop(symbol, close_price, atr)
+                if new_stop != old_stop:
+                    diagnostics["trailing_stop_updates"] += 1
 
         for symbol, row in rows.items():
             position = account.positions.get(symbol)
