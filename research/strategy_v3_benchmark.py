@@ -81,7 +81,16 @@ def _run_oos(payload: tuple[int, pd.Timestamp, pd.Timestamp]) -> tuple[str, int,
     assert _WORKER_FRAMES is not None and _WORKER_CONFIG is not None and _WORKER_V3 is not None
     fold, start, end = payload
     fold_frames = _slice_frames(_WORKER_FRAMES, start, end)
-    result, diag = run_v3(fold_frames, _WORKER_CONFIG, _WORKER_V3, include_bootstrap=False)
+    # OOS promotion metrics do not use Monte Carlo. Disable the expensive
+    # 1000-simulation diagnostic only inside this worker, leaving the normal
+    # run_v3 API and full-run robustness report unchanged.
+    import research.strategy_v3_replay as replay_module
+    original_bootstrap = replay_module.bootstrap_monte_carlo
+    replay_module.bootstrap_monte_carlo = lambda *args, **kwargs: {"status": "SKIPPED_OOS"}
+    try:
+        result, diag = run_v3(fold_frames, _WORKER_CONFIG, _WORKER_V3)
+    finally:
+        replay_module.bootstrap_monte_carlo = original_bootstrap
     return "oos", fold, str(start), str(end), result, diag
 
 
@@ -92,8 +101,14 @@ def _run_parallel(frames: dict[str, pd.DataFrame], config: ReplayConfig, v3: V3C
         oos = []
         for payload in payloads:
             fold, start, end = payload
-            fold_frames = _slice_frames(frames, start, end)
-            r, d = run_v3(fold_frames, config, v3, include_bootstrap=False)
+            fold_frames = _slice_frames(frames, fold_start, fold_end)
+            import research.strategy_v3_replay as replay_module
+            original_bootstrap = replay_module.bootstrap_monte_carlo
+            replay_module.bootstrap_monte_carlo = lambda *args, **kwargs: {"status": "SKIPPED_OOS"}
+            try:
+                r, d = run_v3(fold_frames, config, v3)
+            finally:
+                replay_module.bootstrap_monte_carlo = original_bootstrap
             oos.append({"fold": fold, "start": str(start), "end": str(end), "result": r, "diagnostics": d})
         return (result, diag), oos
 
