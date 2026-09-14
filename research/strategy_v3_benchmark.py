@@ -64,11 +64,10 @@ def _slice_frames(frames: dict[str, pd.DataFrame], start: pd.Timestamp, end: pd.
     return {s: f[(f["timestamp"] >= start) & (f["timestamp"] < end)].copy() for s, f in frames.items()}
 
 
-def _init_worker(frames, config, v3) -> None:
-    global _WORKER_FRAMES, _WORKER_CONFIG, _WORKER_V3
-    _WORKER_FRAMES = frames
-    _WORKER_CONFIG = config
-    _WORKER_V3 = v3
+def _init_worker() -> None:
+    # Intentionally empty: with fork the workers inherit the parent's
+    # read-only dataframe/config globals copy-on-write, avoiding serialization.
+    return None
 
 
 def _run_full_v3() -> tuple[str, dict, dict]:
@@ -81,9 +80,6 @@ def _run_oos(payload: tuple[int, pd.Timestamp, pd.Timestamp]) -> tuple[str, int,
     assert _WORKER_FRAMES is not None and _WORKER_CONFIG is not None and _WORKER_V3 is not None
     fold, start, end = payload
     fold_frames = _slice_frames(_WORKER_FRAMES, start, end)
-    # OOS promotion metrics do not use Monte Carlo. Disable the expensive
-    # 1000-simulation diagnostic only inside this worker, leaving the normal
-    # run_v3 API and full-run robustness report unchanged.
     import research.strategy_v3_replay as replay_module
     original_bootstrap = replay_module.bootstrap_monte_carlo
     replay_module.bootstrap_monte_carlo = lambda *args, **kwargs: {"status": "SKIPPED_OOS"}
@@ -99,9 +95,8 @@ def _run_parallel(frames: dict[str, pd.DataFrame], config: ReplayConfig, v3: V3C
     if os.name != "posix":
         result, diag = run_v3(frames, config, v3)
         oos = []
-        for payload in payloads:
-            fold, start, end = payload
-            fold_frames = _slice_frames(frames, fold_start, fold_end)
+        for fold, start, end in payloads:
+            fold_frames = _slice_frames(frames, start, end)
             import research.strategy_v3_replay as replay_module
             original_bootstrap = replay_module.bootstrap_monte_carlo
             replay_module.bootstrap_monte_carlo = lambda *args, **kwargs: {"status": "SKIPPED_OOS"}
@@ -113,9 +108,11 @@ def _run_parallel(frames: dict[str, pd.DataFrame], config: ReplayConfig, v3: V3C
         return (result, diag), oos
 
     import multiprocessing as mp
+    global _WORKER_FRAMES, _WORKER_CONFIG, _WORKER_V3
+    _WORKER_FRAMES, _WORKER_CONFIG, _WORKER_V3 = frames, config, v3
     ctx = mp.get_context("fork")
     max_workers = min(len(payloads) + 1, max(2, (os.cpu_count() or 2) - 1))
-    with ProcessPoolExecutor(max_workers=max_workers, mp_context=ctx, initializer=_init_worker, initargs=(frames, config, v3)) as pool:
+    with ProcessPoolExecutor(max_workers=max_workers, mp_context=ctx, initializer=_init_worker) as pool:
         futures = [pool.submit(_run_full_v3)] + [pool.submit(_run_oos, payload) for payload in payloads]
         full = futures[0].result()
         oos_results = [future.result() for future in futures[1:]]
