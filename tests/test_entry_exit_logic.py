@@ -38,3 +38,21 @@ def test_exit_requires_confirmed_trend_break():
 def test_exit_does_not_trigger_on_small_pullback():
     prices = [100.0, 100.3, 100.6, 100.9, 101.1, 101.3, 101.5, 101.6, 101.7, 101.6, 101.5, 101.4]
     assert exit_signal(prices) is False
+
+
+def test_exit_requires_three_consecutive_reversal_bars_for_long():
+    # Previously the stronger 4-bar reversal branch could trigger on only two
+    # negative bars plus a larger short-term drop. It must now wait for 3/3.
+    prices = [
+        100.0, 100.35789, 100.42292, 99.9954, 100.56217, 100.27211,
+        100.0046, 99.74134, 100.00041, 100.28526, 100.1335, 99.8377,
+    ]
+    assert exit_signal(prices, "LONG") is False
+
+
+def test_exit_requires_three_consecutive_reversal_bars_for_short():
+    prices = [
+        100.0, 99.64211, 99.57708, 100.0046, 99.43783, 99.72789,
+        99.9954, 100.25866, 99.99959, 99.71474, 99.8665, 100.1623,
+    ]
+    assert exit_signal(prices, "SHORT") is False
