@@ -52,12 +52,29 @@ def _candidate(symbol, timestamp, bars, account, histories, btc_bars, config, di
     return {"symbol": symbol, "direction": setup.direction, "score": setup.score, "atr": atr, "risk_pct": risk_pct, "regime": setup.regime}
 
 
+def _trail_multiple(regime: str, partial_taken: bool, setup_score: float) -> float:
+    """Choose a fixed, state-aware ATR trail without looking into the future."""
+    if not partial_taken:
+        multiple = 2.8
+        if regime in ("TREND_UP", "TREND_DOWN"): multiple = 3.2
+        elif regime == "RANGE": multiple = 2.4
+        elif regime == "HIGH_VOL": multiple = 3.0
+    else:
+        multiple = 1.8
+        if regime in ("TREND_UP", "TREND_DOWN"): multiple = 2.2
+        elif regime == "RANGE": multiple = 1.5
+        elif regime == "HIGH_VOL": multiple = 1.9
+    if setup_score >= 0.78:
+        multiple += 0.2
+    return multiple
+
+
 def run_v3(frames: dict[str, pd.DataFrame], config: ReplayConfig = ReplayConfig(), v3: V3Config = V3Config()) -> tuple[dict, dict]:
     bars = {symbol: {"5m": _resample(frame, "5min"), "15m": _resample(frame, "15min"), "1h": _resample(frame, "1h")} for symbol, frame in frames.items()}
     btc_bars = bars["BTCUSDT"]
     account = PaperAccount(capital=config.capital, cash=config.capital, risk_pct=config.risk_pct, fee_pct=config.fee_pct, slippage_pct=config.slippage_pct, max_daily_loss_pct=config.max_daily_loss_pct)
     histories = {symbol: deque(maxlen=60) for symbol in frames}; atr_by_symbol = defaultdict(float); cursor = {symbol: 0 for symbol in frames}; pending = {}; stats = _stats()
-    diagnostics = {"strategy": "V3", "signals": 0, "opened_trades": 0, "below_threshold": 0, "insufficient_mtf": 0, "invalid_atr": 0, "portfolio_rejections": defaultdict(int), "partials": 0, "partial_pnl": 0.0, "max_open_positions": 0, "trailing_stop_updates": 0, "exits": {"SL": 0, "TP": 0, "SIGNAL": 0, "TIME_STOP": 0, "ADAPTIVE_PARTIAL": 0, "ADAPTIVE_TIME_STOP": 0, "ADAPTIVE_CLOSE": 0}, "exit_policy_decisions": defaultdict(int), "regime_trade_counts": defaultdict(int)}
+    diagnostics = {"strategy": "V3", "signals": 0, "opened_trades": 0, "below_threshold": 0, "insufficient_mtf": 0, "invalid_atr": 0, "portfolio_rejections": defaultdict(int), "partials": 0, "partial_pnl": 0.0, "max_open_positions": 0, "trailing_stop_updates": 0, "exits": {"SL": 0, "TP": 0, "SIGNAL": 0, "TIME_STOP": 0, "ADAPTIVE_PARTIAL": 0, "ADAPTIVE_TARGET": 0, "ADAPTIVE_TIME_STOP": 0, "ADAPTIVE_CLOSE": 0}, "exit_policy_decisions": defaultdict(int), "regime_trade_counts": defaultdict(int)}
     curve = []; active_paths: dict[str, list[float]] = {}; active_meta: dict[str, dict] = {}; forensic_records = []
 
     def record_close(symbol: str, exit_price: float, reason: str, timestamp: str) -> None:
@@ -96,9 +113,9 @@ def run_v3(frames: dict[str, pd.DataFrame], config: ReplayConfig = ReplayConfig(
             c5 = _completed(bars[symbol]["5m"], timestamp); atr = _atr(c5) or atr_by_symbol[symbol]; atr_by_symbol[symbol] = atr
             stop = position.stop_price
 
-            # Protective stop is evaluated before any new trailing level. This
-            # avoids using the completed bar's close to retroactively tighten
-            # the stop against that same bar's low/high.
+            # Evaluate the protective stop from the level that was active at
+            # the start of this bar. A new trailing level cannot retroactively
+            # apply to the same bar's low/high.
             if (position.direction == "LONG" and float(row["low"]) <= stop) or (position.direction == "SHORT" and float(row["high"]) >= stop):
                 _record(stats, account.close_position(stop, "SL", str(timestamp), symbol=symbol, trigger_price=stop)); diagnostics["exits"]["SL"] += 1; record_close(symbol, stop, "SL", str(timestamp)); continue
 
@@ -108,9 +125,6 @@ def run_v3(frames: dict[str, pd.DataFrame], config: ReplayConfig = ReplayConfig(
                 decision = adaptive_exit_policy(position.direction, position.entry_price, close_price, stop, bars_open, setup_score, active_meta.get(symbol, {}).get("regime", "TRANSITION"), v3, risk_distance=active_meta.get(symbol, {}).get("stop_distance"), partial_taken=position.partial_taken)
                 diagnostics["exit_policy_decisions"][decision.action] += 1
                 if decision.action == "PARTIAL" and not position.partial_taken:
-                    # A partial target is a resting order: once the threshold
-                    # is known from entry state, an intrabar high/low reaching
-                    # it can fill even when the candle later closes below it.
                     risk = active_meta[symbol]["stop_distance"]
                     target = position.entry_price + decision.partial_threshold_r * risk if position.direction == "LONG" else position.entry_price - decision.partial_threshold_r * risk
                     reached = float(row["high"]) >= target if position.direction == "LONG" else float(row["low"]) <= target
@@ -119,9 +133,14 @@ def run_v3(frames: dict[str, pd.DataFrame], config: ReplayConfig = ReplayConfig(
                 elif decision.action == "CLOSE":
                     reason = decision.reason; _record(stats, account.close_position(close_price, reason, str(timestamp), symbol=symbol, trigger_price=close_price)); diagnostics["exits"][reason] += 1; record_close(symbol, close_price, reason, str(timestamp)); continue
 
-            # New trailing level only becomes active on the next bar.
+            # The trail is staged: wide while a position is proving itself,
+            # tighter after a partial has banked profit. The supplied ATR is
+            # scaled against PaperAccount's fixed 2.2x internal multiplier.
             if symbol in account.positions and atr > 0:
-                old_stop = account.positions[symbol].stop_price; new_stop = account.update_trailing_stop(symbol, close_price, atr)
+                regime = active_meta.get(symbol, {}).get("regime", "TRANSITION")
+                multiple = _trail_multiple(regime, account.positions[symbol].partial_taken, setup_score)
+                effective_atr = atr * multiple / max(v3.trail_atr_multiple, 1e-9)
+                old_stop = account.positions[symbol].stop_price; new_stop = account.update_trailing_stop(symbol, close_price, effective_atr)
                 if new_stop != old_stop: diagnostics["trailing_stop_updates"] += 1
 
         for symbol, row in rows.items():
