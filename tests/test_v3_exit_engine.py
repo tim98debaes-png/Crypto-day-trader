@@ -39,7 +39,9 @@ def test_initial_risk_anchor_survives_trailing_stop():
 
 def test_partial_is_only_requested_once():
     first = adaptive_exit_policy("LONG", 100, 102, 99, 10, 0.70, "RANGE")
-    # 1R is above the RANGE partial threshold but below its 1.75R runner target.
+    # With a 1R move the partial threshold has been crossed, but the
+    # RANGE runner target (1.75R) has not. After the partial is already
+    # taken, the engine must not request another PARTIAL.
     runner = adaptive_exit_policy("LONG", 100, 101, 100, 11, 0.70, "RANGE", risk_distance=1.0, partial_taken=True)
     assert first.action == "PARTIAL"
     assert runner.action == "HOLD"
