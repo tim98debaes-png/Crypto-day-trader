@@ -59,7 +59,6 @@ def entry_signal_details(prices: list[float], direction: str = "LONG"):
         "medium_momentum": medium >= 0.0005 if direction == "LONG" else medium <= -0.0005,
         "short_momentum": short >= 0.0005 if direction == "LONG" else short <= -0.0005,
         "positive_microstructure": positive >= 2 if direction == "LONG" else negative >= 2,
-        # Diagnostic only: deliberately excluded from the legacy 5-factor score.
         "pullback_bounce": confirmed_bounce,
         "bounce_score": bounce_score,
         "bounce_checks": bounce_checks,
@@ -106,9 +105,8 @@ def exit_signal(prices: list[float], direction: str = "LONG"):
     recent = [prices[i] / prices[i - 1] - 1.0 for i in range(len(prices) - 3, len(prices))]
     negative = sum(move < 0 for move in recent)
     positive = sum(move > 0 for move in recent)
-    short = prices[-1] / prices[-4] - 1.0
     if direction == "LONG":
-        return prices[-1] < fast * 0.9985 and fast < slow and (negative == 3 or (negative >= 2 and short < -0.0008))
+        return prices[-1] < fast * 0.9985 and fast < slow and negative == 3
     if direction == "SHORT":
-        return prices[-1] > fast * 1.0015 and fast > slow and (positive == 3 or (positive >= 2 and short > 0.0008))
+        return prices[-1] > fast * 1.0015 and fast > slow and positive == 3
     return False
