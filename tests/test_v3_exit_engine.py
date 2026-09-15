@@ -39,9 +39,11 @@ def test_initial_risk_anchor_survives_trailing_stop():
 
 def test_partial_is_only_requested_once():
     first = adaptive_exit_policy("LONG", 100, 102, 99, 10, 0.70, "RANGE")
-    runner = adaptive_exit_policy("LONG", 100, 102, 100, 11, 0.70, "RANGE", risk_distance=1.0, partial_taken=True)
+    # 1R is above the RANGE partial threshold but below its 1.75R runner target.
+    runner = adaptive_exit_policy("LONG", 100, 101, 100, 11, 0.70, "RANGE", risk_distance=1.0, partial_taken=True)
     assert first.action == "PARTIAL"
     assert runner.action == "HOLD"
+    assert runner.reason == "HOLD"
 
 
 def test_runner_closes_at_regime_target():
@@ -51,7 +53,7 @@ def test_runner_closes_at_regime_target():
 
 
 def test_runner_closes_on_deep_retracement_after_partial():
-    decision = adaptive_exit_policy("LONG", 100, 100.1, 100, 10, 0.70, "RANGE", risk_distance=1.0, partial_taken=True)
+    decision = adaptive_exit_policy("LONG", 100, 99.8, 100, 10, 0.70, "RANGE", risk_distance=1.0, partial_taken=True)
     assert decision.action == "CLOSE"
     assert decision.reason == "ADAPTIVE_CLOSE"
 
