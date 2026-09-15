@@ -30,6 +30,10 @@ def test_uptrend_breakout_long_signal():
 
 def test_downtrend_breakout_short_signal():
     df = make_data(trend=-0.5)
+    # A close-only breakout requires the close itself to cross the prior low.
+    prior_low = df.loc[60:79, "low"].min()
+    df.loc[80, "close"] = prior_low - 2
+    df.loc[80, "low"] = df.loc[80, "close"] - 0.5
     sig = signal_at(df, 80)
     assert sig.direction == "SHORT"
     assert sig.stop_distance > 0
