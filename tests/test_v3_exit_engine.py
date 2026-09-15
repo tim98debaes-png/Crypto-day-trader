@@ -55,7 +55,9 @@ def test_runner_closes_at_regime_target():
 
 
 def test_runner_closes_on_deep_retracement_after_partial():
-    decision = adaptive_exit_policy("LONG", 100, 99.8, 100, 10, 0.70, "RANGE", risk_distance=1.0, partial_taken=True)
+    # Keep the market price below entry (negative R) but above the
+    # protective stop, so the adaptive runner close—not STOP—is tested.
+    decision = adaptive_exit_policy("LONG", 100, 99.8, 99.0, 10, 0.70, "RANGE", risk_distance=1.0, partial_taken=True)
     assert decision.action == "CLOSE"
     assert decision.reason == "ADAPTIVE_CLOSE"
 
