@@ -113,9 +113,9 @@ def run_v3(frames: dict[str, pd.DataFrame], config: ReplayConfig = ReplayConfig(
             c5 = _completed(bars[symbol]["5m"], timestamp); atr = _atr(c5) or atr_by_symbol[symbol]; atr_by_symbol[symbol] = atr
             stop = position.stop_price
 
-            # Evaluate the protective stop from the level that was active at
-            # the start of this bar. A new trailing level cannot retroactively
-            # apply to the same bar's low/high.
+            # Evaluate the protective stop from the level active at the start
+            # of the bar. A new trailing level cannot retroactively apply to
+            # this bar's low/high.
             if (position.direction == "LONG" and float(row["low"]) <= stop) or (position.direction == "SHORT" and float(row["high"]) >= stop):
                 _record(stats, account.close_position(stop, "SL", str(timestamp), symbol=symbol, trigger_price=stop)); diagnostics["exits"]["SL"] += 1; record_close(symbol, stop, "SL", str(timestamp)); continue
 
@@ -130,12 +130,17 @@ def run_v3(frames: dict[str, pd.DataFrame], config: ReplayConfig = ReplayConfig(
                     reached = float(row["high"]) >= target if position.direction == "LONG" else float(row["low"]) <= target
                     if reached:
                         pnl = account.take_partial_profit(symbol, target, str(timestamp)); diagnostics["partials"] += 1; diagnostics["partial_pnl"] += pnl
-                elif decision.action == "CLOSE":
+                        position = account.positions[symbol]
+                if symbol in account.positions and account.positions[symbol].partial_taken:
+                    position = account.positions[symbol]
+                    risk = active_meta[symbol]["stop_distance"]
+                    runner_target = position.entry_price + decision.runner_target_r * risk if position.direction == "LONG" else position.entry_price - decision.runner_target_r * risk
+                    target_reached = float(row["high"]) >= runner_target if position.direction == "LONG" else float(row["low"]) <= runner_target
+                    if target_reached:
+                        _record(stats, account.close_position(runner_target, "ADAPTIVE_TARGET", str(timestamp), symbol=symbol, trigger_price=runner_target)); diagnostics["exits"]["ADAPTIVE_TARGET"] += 1; record_close(symbol, runner_target, "ADAPTIVE_TARGET", str(timestamp)); continue
+                if decision.action == "CLOSE":
                     reason = decision.reason; _record(stats, account.close_position(close_price, reason, str(timestamp), symbol=symbol, trigger_price=close_price)); diagnostics["exits"][reason] += 1; record_close(symbol, close_price, reason, str(timestamp)); continue
 
-            # The trail is staged: wide while a position is proving itself,
-            # tighter after a partial has banked profit. The supplied ATR is
-            # scaled against PaperAccount's fixed 2.2x internal multiplier.
             if symbol in account.positions and atr > 0:
                 regime = active_meta.get(symbol, {}).get("regime", "TRANSITION")
                 multiple = _trail_multiple(regime, account.positions[symbol].partial_taken, setup_score)
